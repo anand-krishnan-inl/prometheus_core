@@ -25,9 +25,8 @@ Run the tests (extend tests/test_agent.py as you implement your logic):
 Run with Docker (integration testing / deployment):
   # Set PROMETHEUS_API_BASE_IMAGE_HASH in .env first (defaults to `latest`)
   # No registry access? Build the base image locally first:
-  #   make -C <monorepo>/sdk build-local
-  # then set PROMETHEUS_API_BASE_IMAGE_REPO=prometheus_api and
-  # PROMETHEUS_API_BASE_IMAGE_HASH=local in .env
+  #   make -C <monorepo>/platform base-image
+  # then set LOCAL_SDK=true in .env (setup does this when the platform uses it)
   make up-fg
 
 By default, make joins the platform Docker network. To expose the agent port,

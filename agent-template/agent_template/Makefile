@@ -15,6 +15,17 @@ EXTERNAL_AGENT_HOST ?= $(call read_dotenv,EXTERNAL_AGENT_HOST)
 EXTERNAL_AGENT_PORT ?= $(call read_dotenv,EXTERNAL_AGENT_PORT)
 export EXTERNAL_AGENT_HOST EXTERNAL_AGENT_PORT
 
+# Set LOCAL_SDK=true (in .env or on the command line) to build FROM the
+# prometheus_api base image the platform built locally (`make base-image` in
+# platform/) instead of pulling from the registry. Must match platform/Makefile.
+LOCAL_SDK ?= $(call read_dotenv,LOCAL_SDK)
+LOCAL_SDK_IMAGE := prometheus_api:local
+
+ifeq ($(LOCAL_SDK),true)
+export PROMETHEUS_API_BASE_IMAGE_REPO := prometheus_api
+export PROMETHEUS_API_BASE_IMAGE_HASH := local
+endif
+
 HAS_EXTERNAL_AGENT_HOST := $(if $(strip $(EXTERNAL_AGENT_HOST)),yes,no)
 HAS_EXTERNAL_AGENT_PORT := $(if $(strip $(EXTERNAL_AGENT_PORT)),yes,no)
 
@@ -38,7 +49,7 @@ endif
 
 COMPOSE_FILES := $(strip -f $(COMPOSE_BASE) $(COMPOSE_NET) $(COMPOSE_LINUX))
 
-.PHONY: help validate-network up up-fg down logs
+.PHONY: help validate-network check-base-image up up-fg down logs
 
 help: ##@ (Default) Print listing of key targets with their descriptions
 	@printf "\nUsage: make <command>\n"
@@ -68,12 +79,22 @@ else ifeq ($(NETWORK_MODE),internal)
 	fi
 endif
 
+check-base-image:
+ifeq ($(LOCAL_SDK),true)
+	@if ! docker image inspect $(LOCAL_SDK_IMAGE) >/dev/null 2>&1; then \
+		echo "\nLOCAL_SDK=true but the $(LOCAL_SDK_IMAGE) base image does not exist."; \
+		echo "Build it from the monorepo first:"; \
+		echo "  make -C <monorepo>/platform base-image\n"; \
+		exit 1; \
+	fi
+endif
+
 up: ##@ Build and start the agent (detached)
-up: validate-network
+up: validate-network check-base-image
 	$(COMPOSE) $(COMPOSE_FILES) up --build -d
 
 up-fg: ##@ Build and start the agent (foreground)
-up-fg: validate-network
+up-fg: validate-network check-base-image
 	$(COMPOSE) $(COMPOSE_FILES) up --build
 
 down: ##@ Stop and remove the agent

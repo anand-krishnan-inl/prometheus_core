@@ -107,27 +107,49 @@ def test_select_platform_env_values_includes_llm_config_profile(tmp_path):
     assert "MODEL_NAME" not in selected
 
 
-def test_select_platform_env_values_points_at_local_base_image_with_local_sdk(tmp_path):
+def test_select_platform_env_values_points_at_local_base_image_with_local_sdk(tmp_path, monkeypatch):
     """A LOCAL_SDK=true platform has no registry access, so the agent must
     build FROM the base image the platform built locally, not the registry."""
+    monkeypatch.delenv("LOCAL_SDK", raising=False)
     platform_env = tmp_path / "platform.env"
     platform_env.write_text("AGENT_SECRET=shared-secret\nLOCAL_SDK=true\n", encoding="utf-8")
 
     selected = setup_agent.select_platform_env_values(platform_env)
 
-    assert selected["PROMETHEUS_API_BASE_IMAGE_REPO"] == "prometheus_api"
-    assert selected["PROMETHEUS_API_BASE_IMAGE_HASH"] == "local"
-    assert "LOCAL_SDK" not in selected
+    assert selected["LOCAL_SDK"] == "true"
+    assert "PROMETHEUS_API_BASE_IMAGE_REPO" not in selected
 
 
-def test_select_platform_env_values_leaves_base_image_alone_without_local_sdk(tmp_path):
+def test_select_platform_env_values_reads_local_sdk_from_environment(tmp_path, monkeypatch):
+    """`LOCAL_SDK=true make up` (or an exported LOCAL_SDK) never lands in
+    platform/.env, so the scaffolder must also check the environment."""
+    monkeypatch.setenv("LOCAL_SDK", "true")
+    platform_env = tmp_path / "platform.env"
+    platform_env.write_text("AGENT_SECRET=shared-secret\n#LOCAL_SDK=false\n", encoding="utf-8")
+
+    selected = setup_agent.select_platform_env_values(platform_env)
+
+    assert selected["LOCAL_SDK"] == "true"
+
+
+def test_select_platform_env_values_prefers_platform_env_over_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCAL_SDK", "true")
     platform_env = tmp_path / "platform.env"
     platform_env.write_text("AGENT_SECRET=shared-secret\nLOCAL_SDK=false\n", encoding="utf-8")
 
     selected = setup_agent.select_platform_env_values(platform_env)
 
-    assert "PROMETHEUS_API_BASE_IMAGE_REPO" not in selected
-    assert "PROMETHEUS_API_BASE_IMAGE_HASH" not in selected
+    assert "LOCAL_SDK" not in selected
+
+
+def test_select_platform_env_values_leaves_base_image_alone_without_local_sdk(tmp_path, monkeypatch):
+    monkeypatch.delenv("LOCAL_SDK", raising=False)
+    platform_env = tmp_path / "platform.env"
+    platform_env.write_text("AGENT_SECRET=shared-secret\nLOCAL_SDK=false\n", encoding="utf-8")
+
+    selected = setup_agent.select_platform_env_values(platform_env)
+
+    assert "LOCAL_SDK" not in selected
 
 
 def _feed_input(monkeypatch, answers):
@@ -207,7 +229,7 @@ def test_env_only_writes_env_and_gitignore_for_existing_agent(tmp_path, monkeypa
     env = (agent_dir / ".env").read_text(encoding="utf-8")
     assert "AGENT_SECRET=mine" in env
     assert "owners" not in env
-    assert "PROMETHEUS_API_BASE_IMAGE_HASH=local" in env
+    assert "LOCAL_SDK=true" in env
     assert "ANTHROPIC_API_KEY" not in env
     assert ".env" in (agent_dir / ".gitignore").read_text(encoding="utf-8").splitlines()
 

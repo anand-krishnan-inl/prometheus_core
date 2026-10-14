@@ -36,6 +36,7 @@ clone of a teammate's agent repo), from this clone's ../platform/.env.
 """
 
 import argparse
+import os
 import re
 import shutil
 import sys
@@ -57,9 +58,6 @@ PLATFORM_SECRET_KEYS = (
     # silently defaulting to `registry` when the platform uses something else.
     "LLM_CONFIG_PROFILE",
 )
-# Must match the LOCAL_SDK=true image in platform/Makefile.
-LOCAL_SDK_IMAGE_REPO = "prometheus_api"
-LOCAL_SDK_IMAGE_HASH = "local"
 ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SECRET_GITIGNORE_ENTRIES = (".env",)
 
@@ -243,6 +241,15 @@ def read_env_assignments(env_path: Path) -> dict[str, str]:
     return assignments
 
 
+def platform_uses_local_sdk(assignments: dict[str, str]) -> bool:
+    """Whether the platform builds with LOCAL_SDK=true.
+
+    Mirrors platform/Makefile precedence: a LOCAL_SDK line in platform/.env
+    wins, otherwise the shell environment (e.g. `export LOCAL_SDK=true`).
+    """
+    return assignments.get("LOCAL_SDK", os.environ.get("LOCAL_SDK")) == "true"
+
+
 def select_platform_env_values(env_path: Path) -> dict[str, str]:
     """Select the platform env values that are useful to a generated agent."""
     assignments = read_env_assignments(env_path)
@@ -252,11 +259,10 @@ def select_platform_env_values(env_path: Path) -> dict[str, str]:
         if key.startswith("DEEPLYNX_"):
             selected[key] = value
 
-    # A platform built with LOCAL_SDK=true has no registry access; point the
-    # agent at the base image the platform's `make up` built locally.
-    if assignments.get("LOCAL_SDK") == "true":
-        selected["PROMETHEUS_API_BASE_IMAGE_REPO"] = LOCAL_SDK_IMAGE_REPO
-        selected["PROMETHEUS_API_BASE_IMAGE_HASH"] = LOCAL_SDK_IMAGE_HASH
+    # A platform built with LOCAL_SDK=true has no registry access; the agent
+    # Makefile then builds FROM the base image the platform built locally.
+    if platform_uses_local_sdk(assignments):
+        selected["LOCAL_SDK"] = "true"
 
     return selected
 
@@ -299,7 +305,7 @@ def create_env_from_platform_if_requested(output_dir: Path) -> None:
         print(f"\nFound '{PLATFORM_ENV_PATH}', but none of the requested platform values were present.")
         return
 
-    local_sdk = "PROMETHEUS_API_BASE_IMAGE_REPO" in selected_values
+    local_sdk = "LOCAL_SDK" in selected_values
     create_env = confirm_action(
         f"\nFound '{PLATFORM_ENV_PATH}'. Create '{output_dir / '.env'}' with "
         "DEEPLYNX_*, AGENT_SECRET, REDIS_PASSWORD, LITELLM_MASTER_KEY, "
@@ -310,10 +316,8 @@ def create_env_from_platform_if_requested(output_dir: Path) -> None:
     if not create_env:
         if local_sdk:
             print(
-                f"\nNote: the platform uses LOCAL_SDK=true. Set "
-                f"PROMETHEUS_API_BASE_IMAGE_REPO={LOCAL_SDK_IMAGE_REPO} and "
-                f"PROMETHEUS_API_BASE_IMAGE_HASH={LOCAL_SDK_IMAGE_HASH} in the agent's .env, "
-                "or its build pulls the base image from the registry."
+                "\nNote: the platform uses LOCAL_SDK=true. Set LOCAL_SDK=true in the "
+                "agent's .env, or its build pulls the base image from the registry."
             )
         return
 
