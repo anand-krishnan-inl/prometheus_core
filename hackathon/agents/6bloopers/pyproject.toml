@@ -1,7 +1,7 @@
 [project]
-name = "ask-ashley-agent"
+name = "bloopers-agent-agent"
 version = "0.1.0"
-description = "Ask Ashley anything!"
+description = "Run when you need a laugh or you can't help the user in any other way."
 requires-python = ">=3.12"
 dependencies = [
     # List only packages YOUR agent code imports directly.

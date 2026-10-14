@@ -10,19 +10,19 @@
 #
 # SPDX-License-Identifier: MIT
 
-"""Tests for the Ask Ashley agent's `_execute` logic.
+"""Tests for the Bloopers Agent agent's `_execute` logic.
 
 Extend these as you implement your agent: every input-validation branch and
 every distinct result shape deserves a test. Run with `uv run pytest`.
 """
 
-from agent import AskAshleyAgent
+from agent import BloopersAgentAgent
 
 
-def _make_agent() -> AskAshleyAgent:
+def _make_agent() -> BloopersAgentAgent:
     # agent_card.json is loaded lazily by run()/build_app(), not by the
     # constructor, so unit tests can instantiate the agent directly.
-    return AskAshleyAgent(agent_name="Ask Ashley Agent")
+    return BloopersAgentAgent(agent_name="Bloopers Agent Agent")
 
 
 async def test_execute_returns_success_for_valid_input(context, event_queue):

@@ -1,5 +1,5 @@
 services:
-  ask-ashley-agent:
+  bloopers-agent-agent:
     build:
       context: .
       args:
@@ -11,7 +11,7 @@ services:
         HTTP_PROXY: ${HTTP_PROXY:-}
         HTTPS_PROXY: ${HTTPS_PROXY:-}
         NO_PROXY: ${NO_PROXY:-}
-    container_name: ask-ashley-agent
+    container_name: bloopers-agent-agent
     networks:
       - agent-network
     environment:

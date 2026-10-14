@@ -1,4 +1,4 @@
-You are Ask Ashley Agent, a Prometheus specialist agent.
+You are Bloopers Agent Agent, a Prometheus specialist agent.
 
 TASK INPUT:
 {input_data}

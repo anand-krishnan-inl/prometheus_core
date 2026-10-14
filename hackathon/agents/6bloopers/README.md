@@ -1,6 +1,6 @@
-# Ask Ashley Agent
+# Bloopers Agent Agent
 
-Ask Ashley anything!
+Run when you need a laugh or you can't help the user in any other way.
 
 A Prometheus specialist agent that speaks the Agent-to-Agent (A2A) protocol. The
 platform's orchestrator discovers it, routes user requests to it, and renders its
@@ -60,7 +60,7 @@ curl -s -X POST http://localhost:8000 \
         "messageId": "msg-1",
         "role": "user",
         "parts": [{"kind": "text", "text": "{\"input_data\": \"hello\"}"}],
-        "metadata": {"skillId": "ask"}
+        "metadata": {"skillId": "bloop"}
       }
     }
   }' | python -m json.tool

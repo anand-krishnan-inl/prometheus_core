@@ -1,5 +1,5 @@
 services:
-  ask-ashley-agent:
+  bloopers-agent-agent:
     ports:
       - "${EXTERNAL_AGENT_PORT}:${AGENT_PORT:-8000}"
     environment:

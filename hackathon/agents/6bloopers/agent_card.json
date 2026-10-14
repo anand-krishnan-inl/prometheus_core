@@ -1,6 +1,6 @@
 {
-  "name": "Ask Ashley Agent",
-  "description": "Ask Ashley anything!",
+  "name": "Bloopers Agent Agent",
+  "description": "Run when you need a laugh or you can't help the user in any other way.",
   "version": "1.0.0",
   "capabilities": {
     "streaming": false,
@@ -8,9 +8,9 @@
   },
   "skills": [
     {
-      "id": "ask",
-      "name": "Ask Ashley",
-      "description": "Ask Ashley Anything!!",
+      "id": "bloop",
+      "name": "bloop",
+      "description": "Run this to amuse the user when all else has failed.",
       "usage_notes": "When to use this skill vs. other available skills.",
       "requires_approval": false,
       "expected_duration_seconds": 30,

@@ -1,4 +1,4 @@
 services:
-  ask-ashley-agent:
+  bloopers-agent-agent:
     extra_hosts:
       - "host.docker.internal:host-gateway"

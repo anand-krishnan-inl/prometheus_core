@@ -1,7 +1,7 @@
-id: ask-ashley.example_workflow
-name: Ask Ashley Example Workflow
+id: bloopers-agent.example_workflow
+name: Bloopers Agent Example Workflow
 version: "1.0.0"
-description: Example agent-owned workflow for Ask Ashley. Rename this file to .yaml to publish it.
+description: Example agent-owned workflow for Bloopers Agent. Rename this file to .yaml to publish it.
 inputs:
   required:
     - input_data
@@ -12,7 +12,7 @@ execution:
   on_error: fail_fast
 steps:
   - id: run_primary_skill
-    skill_id: ask
+    skill_id: bloop
     is_final: true
     params:
       input_data:
@@ -23,8 +23,8 @@ outputs:
 metadata:
   requires_approval: false
   estimated_duration_seconds: 30
-  owner: ask-ashley
+  owner: bloopers-agent
 ui:
-  category: Ask Ashley
-  display_name: Ask Ashley Example Workflow
-  summary: Example workflow that invokes the primary Ask Ashley skill.
+  category: Bloopers Agent
+  display_name: Bloopers Agent Example Workflow
+  summary: Example workflow that invokes the primary Bloopers Agent skill.
