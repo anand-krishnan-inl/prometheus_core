@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import yaml
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 CONFIG_PATH = os.environ.get(
@@ -78,23 +79,28 @@ def _dev_cors_origins() -> list[str]:
     ]
 
 
-def _redis_url(data: dict[str, Any]) -> str:
-    """Resolve the Redis URL, folding in ``REDIS_PASSWORD`` when the URL carries no
-    credentials.
+def _with_redis_password(url: str) -> str:
+    """Fold ``REDIS_PASSWORD`` into ``url`` when the URL carries no credentials.
 
     The documented setup embeds the password directly in ``REDIS_URL`` (``.env.example``),
     in which case this is a no-op. It only activates the footgun case (DEP-1): a deploy
     sets ``REDIS_PASSWORD`` but leaves ``REDIS_URL`` at a password-less default, which
-    would otherwise hit ``NOAUTH`` on every Redis-backed feature. The password is
-    URL-encoded since this code path constructs the userinfo itself.
+    would otherwise hit ``NOAUTH`` (or, with RESP3, a ``HELLO`` auth error) on every
+    Redis-backed feature. The password is URL-encoded since this code path constructs
+    the userinfo itself.
     """
-    url: str = os.environ.get("REDIS_URL", data.get("redis-url", "redis://localhost:6379"))
     password = os.environ.get("REDIS_PASSWORD")
     if password and "@" not in urlsplit(url).netloc:
         parts = urlsplit(url)
         netloc = f":{quote(password, safe='')}@{parts.netloc}"
         url = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
     return url
+
+
+def _redis_url(data: dict[str, Any]) -> str:
+    """Resolve the Redis URL (env ``REDIS_URL`` > ``config.yml`` > localhost), folding
+    in ``REDIS_PASSWORD`` via :func:`_with_redis_password`."""
+    return _with_redis_password(os.environ.get("REDIS_URL", data.get("redis-url", "redis://localhost:6379")))
 
 
 def _cookie_secure(data: dict) -> bool:
@@ -137,6 +143,14 @@ class Settings(BaseSettings):
     agent_url: str = os.environ.get("CLIENT_AGENT_URL", data.get("agent-url", "http://localhost:8001"))
     agent_secret: str = os.environ.get("AGENT_SECRET", data.get("agent-secret", ""))
     redis_url: str = _redis_url(data)
+
+    # ``BaseSettings`` also reads the ``REDIS_URL`` env var into this field, which
+    # replaces the default above and would skip the ``REDIS_PASSWORD`` folding.
+    # Re-apply it to whatever value won.
+    @field_validator("redis_url")
+    @classmethod
+    def _fold_redis_password(cls, v: str) -> str:
+        return _with_redis_password(v)
 
     # Uploads
     max_upload_bytes: int = get_max_upload_bytes(data)

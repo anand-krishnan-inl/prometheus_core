@@ -55,6 +55,14 @@ def test_redis_url_url_encodes_special_chars(monkeypatch):
     assert config_mod._redis_url({}) == "redis://:p%40ss%2Fw%3Ard@redis:6379"
 
 
+def test_settings_redis_url_folds_password_from_env_override(monkeypatch):
+    # BaseSettings reads REDIS_URL straight into the field, bypassing the default
+    # factory -- the compose file sets exactly this (password-less) value.
+    monkeypatch.setenv("REDIS_PASSWORD", "s3cr3t")
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    assert config_mod.Settings().redis_url == "redis://:s3cr3t@redis:6379"
+
+
 # --------------------------------------------------------------------------- #
 # BLK-3 — lifespan requires a signing secret
 # --------------------------------------------------------------------------- #
