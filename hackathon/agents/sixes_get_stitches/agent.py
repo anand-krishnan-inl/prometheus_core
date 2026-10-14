@@ -22,6 +22,7 @@ serving, and registry registration for you.
 
 import logging
 from typing import Any
+#import aiofiles
 
 from prometheus_api import load_prompt  # noqa: F401 - used by the LLM pattern below
 from prometheus_api.agent import EventQueue, PrometheusAgent, RequestContext
@@ -92,9 +93,10 @@ class ReadExtractPlotAgent(PrometheusAgent):
         # 1. Read inputs from params.  These keys must match the properties
         #    declared in agent_card.json's inputSchema.
         # ------------------------------------------------------------------
-        input_data = params.get("input_data")
-        if not input_data:
-            return {"status": "error", "error": "input_data is required"}
+        document_artifact_id = params.get("document_artifact_id")
+        table_description = params.get("table_description")
+        #if not input_data:
+        #    return {"status": "error", "error": "input_data is required"}
 
         # ------------------------------------------------------------------
         # 2. Send optional progress updates so the UI stays responsive.
@@ -110,11 +112,25 @@ class ReadExtractPlotAgent(PrometheusAgent):
         # ------------------------------------------------------------------
         # 3. Do your actual work here.  Replace this with real logic.
         # ------------------------------------------------------------------
+        source_path = await self.get_artifact_file_path(
+            document_artifact_id,
+            context=context,
+            artifacts=params.get("artifacts"),  # optional orchestrator-provided catalog
+        ) 
+        # --- Read the file asynchronously into a string ---
+        #async with aiofiles.open(source_path, mode='r') as f:
+        #    file_contents: str = await f.read()
+    # -----------------------------------------------
+
         result = {
             "status": "success",
-            "input_received": input_data,
-            "message": "Replace this with your agent's processing logic.",
+            "input_received": {
+                "document_artifact_id": document_artifact_id,
+                "table_description": str(source_path),
+            },
+            "message": f"{str(source_path)} is the output",
         }
+        
 
         # ------------------------------------------------------------------
         # 4. Return a plain dict.  Keep keys consistent with the
