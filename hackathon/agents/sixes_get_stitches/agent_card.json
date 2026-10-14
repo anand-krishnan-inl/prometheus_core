@@ -1,20 +1,20 @@
 {
   "name": "Read Extract Plot Agent",
-  "description": "A specialized agent for read extract plot",
-  "version": "1.0.0",
+  "description": "Extracts a table from an uploaded markdown document and plots its columns.",
+  "version": "1.1.0",
   "capabilities": {
     "streaming": false,
     "pushNotifications": false
   },
   "skills": [
     {
-      "id": "read_extract_plot_analysis",
-      "name": "Read Extract Plot Analysis",
-      "description": "Performs analysis using read extract plot",
-      "usage_notes": "Use this skill for extracting tables from markdown documents, and plotting the columns of the tables",
+      "id": "extract_table",
+      "name": "Extract Table",
+      "description": "Reads an uploaded markdown document, finds the table that matches a description, and returns it as a JSON table artifact.",
+      "usage_notes": "Use this skill first, when the user uploads a markdown (.md) document and wants a table pulled out of it. It does not draw anything. To plot the table, call plot_table afterwards with the table_artifact_id this skill returns.",
       "requires_approval": false,
       "expected_duration_seconds": 30,
-      "output_format": "JSON with keys: status, input_received, message",
+      "output_format": "JSON with keys: status, table_artifact_id, caption, columns, row_count",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -29,6 +29,40 @@
           }
         },
         "required": ["document_artifact_id", "table_description"]
+      }
+    },
+    {
+      "id": "plot_table",
+      "name": "Plot Table",
+      "description": "Plots columns of a table that extract_table produced and returns the plot as a PNG artifact.",
+      "usage_notes": "Use this skill only after extract_table has produced a table artifact in this conversation. Pass that table's artifact id, the column for the x axis, and one or more columns for the y axis. Do not use it on a raw document; extract the table first.",
+      "requires_approval": false,
+      "expected_duration_seconds": 30,
+      "output_format": "JSON with keys: status, artifact_id, chart_type, x_column, y_columns",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "table_artifact_id": {
+            "type": "string",
+            "x_artifact_ref": "single",
+            "description": "The table artifact returned by extract_table (its table_artifact_id)."
+          },
+          "x_column": {
+            "type": "string",
+            "description": "Name of the column to use for the x axis, exactly as it appears in the table's columns."
+          },
+          "y_columns": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "One or more column names to plot on the y axis, exactly as they appear in the table's columns."
+          },
+          "chart_type": {
+            "type": "string",
+            "enum": ["line", "bar", "scatter"],
+            "description": "Kind of chart to draw. Defaults to 'line'."
+          }
+        },
+        "required": ["table_artifact_id", "x_column", "y_columns"]
       }
     }
   ]
