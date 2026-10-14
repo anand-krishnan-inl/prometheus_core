@@ -14,6 +14,7 @@ dependencies = [
     #   "anthropic>=0.18.0",   # if you call Claude directly
     #   "httpx>=0.26.0",       # if you call external HTTP APIs
     #   "numpy>=1.26.0",       # if you use NumPy
+    "aiofiles",
 ]
 
 [dependency-groups]

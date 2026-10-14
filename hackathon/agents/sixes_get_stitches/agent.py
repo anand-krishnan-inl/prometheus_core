@@ -22,7 +22,7 @@ serving, and registry registration for you.
 
 import logging
 from typing import Any
-#import aiofiles
+import aiofiles
 
 from prometheus_api import load_prompt  # noqa: F401 - used by the LLM pattern below
 from prometheus_api.agent import EventQueue, PrometheusAgent, RequestContext
@@ -118,8 +118,8 @@ class ReadExtractPlotAgent(PrometheusAgent):
             artifacts=params.get("artifacts"),  # optional orchestrator-provided catalog
         ) 
         # --- Read the file asynchronously into a string ---
-        #async with aiofiles.open(source_path, mode='r') as f:
-        #    file_contents: str = await f.read()
+        async with aiofiles.open(source_path, mode='r') as f:
+            file_contents: str = await f.read()
     # -----------------------------------------------
 
         result = {
@@ -128,7 +128,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
                 "document_artifact_id": document_artifact_id,
                 "table_description": str(source_path),
             },
-            "message": f"{str(source_path)} is the output",
+            "message": f"{str(file_contents)} is the output",
         }
         
 
