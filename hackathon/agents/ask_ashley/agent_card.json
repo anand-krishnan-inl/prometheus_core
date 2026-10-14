@@ -1,0 +1,30 @@
+{
+  "name": "Ask Ashley Agent",
+  "description": "Ask Ashley anything!",
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "skills": [
+    {
+      "id": "ask",
+      "name": "Ask Ashley",
+      "description": "Ask Ashley Anything!!",
+      "usage_notes": "When to use this skill vs. other available skills.",
+      "requires_approval": false,
+      "expected_duration_seconds": 30,
+      "output_format": "JSON with keys: status, input_received, message",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "input_data": {
+            "type": "string",
+            "description": "The main input data to process."
+          }
+        },
+        "required": ["input_data"]
+      }
+    }
+  ]
+}
