@@ -1,20 +1,20 @@
 {
-  "name": "Read Extract Plot Agent",
-  "description": "A specialized agent for read extract plot",
-  "version": "1.0.0",
+  "name": "Sixes Get Stitches Table Plot Agent",
+  "description": "Extracts a table from an uploaded markdown document, and plots columns of that table or of an uploaded CSV file.",
+  "version": "1.2.0",
   "capabilities": {
     "streaming": false,
     "pushNotifications": false
   },
   "skills": [
     {
-      "id": "read_extract_plot_analysis",
-      "name": "Read Extract Plot Analysis",
-      "description": "Performs analysis using read extract plot",
-      "usage_notes": "Use this skill for extracting tables from markdown documents, and plotting the columns of the tables",
+      "id": "sixes_extract_table",
+      "name": "Extract Table",
+      "description": "Reads an uploaded markdown document, finds the table that matches a description, and returns the table's actual data (as markdown) plus a JSON table artifact. Can also answer a question about the table's values.",
+      "usage_notes": "Use this skill when the user uploads a markdown (.md) document and wants a table pulled out of it, OR asks a question about the data in one of its tables (e.g. 'what is the oldest age of the dragon?', 'which row has the highest X?'). Pass the user's description of the table in their own words (it is matched against the table captions); if the user didn't name a table, describe the topic of the question. When the user asks a question about the data, ALWAYS pass it in `question`; the result's `answer` field then holds the answer, computed over the full table. The result's `table_markdown` field contains the table rows themselves: read the values from it to answer follow-up questions, never guess. It does not draw anything; to plot the table, call sixes_plot_table afterwards with the table_artifact_id this skill returns. Do not use it on a CSV file; CSV files go straight to sixes_plot_table.",
       "requires_approval": false,
       "expected_duration_seconds": 30,
-      "output_format": "JSON with keys: status, input_received, message",
+      "output_format": "JSON with keys: status, table_artifact_id, caption, columns, numeric_columns, row_count, table_markdown (the table data), answer (only when a question was passed)",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -26,9 +26,58 @@
           "table_description": {
             "type": "string",
             "description": "Text describing which table to find, e.g. 'the table with population data'."
+          },
+          "question": {
+            "type": "string",
+            "description": "Optional. The user's question about the table's data, in their own words, e.g. 'What is the oldest age of the dragon?'. Leave empty if the user only wants the table extracted or plotted."
           }
         },
-        "required": ["document_artifact_id", "table_description"]
+        "required": [
+          "document_artifact_id",
+          "table_description"
+        ]
+      }
+    },
+    {
+      "id": "sixes_plot_table",
+      "name": "Plot Table",
+      "description": "Plots columns of tabular data, either a table artifact produced by sixes_extract_table or an uploaded CSV file, and returns the plot as a PNG image artifact.",
+      "usage_notes": "Use this skill to plot a table artifact from sixes_extract_table, or directly on an uploaded CSV file (no extraction needed). Pass the column names in the user's own words if they did not use the exact names; the skill matches them to the real columns. If the user did not say which columns to plot (e.g. just 'plot table 3'), leave x_column and y_columns empty and do NOT ask the user yourself: the skill then plots the first column on x against every numeric column on y. Do not invent column names. Do not use it on a raw markdown document with several tables; extract the table first.",
+      "requires_approval": false,
+      "expected_duration_seconds": 30,
+      "output_format": "JSON with keys: status, artifact_id, chart_type, x_column, y_columns",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "table_artifact_id": {
+            "type": "string",
+            "x_artifact_ref": "single",
+            "description": "The table artifact returned by sixes_extract_table (its table_artifact_id), or an uploaded CSV file."
+          },
+          "x_column": {
+            "type": "string",
+            "description": "Column for the x axis, as the user named it. Leave empty if the user did not say; the skill picks sensible defaults."
+          },
+          "y_columns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "One or more columns to plot on the y axis, as the user named them. Leave empty if the user did not say; the skill picks sensible defaults."
+          },
+          "chart_type": {
+            "type": "string",
+            "enum": [
+              "line",
+              "bar",
+              "scatter"
+            ],
+            "description": "Kind of chart to draw. Defaults to 'line'."
+          }
+        },
+        "required": [
+          "table_artifact_id"
+        ]
       }
     }
   ]
