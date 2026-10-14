@@ -28,6 +28,8 @@ import pytest
 import agent as agent_module
 from agent import (
     ReadExtractPlotAgent,
+    _convert_cell,
+    blank_stray_text,
     load_table_file,
     match_column,
     numeric_columns,
@@ -145,6 +147,53 @@ def test_numeric_columns_skips_text_and_allows_missing():
 
     assert numeric_columns(table["columns"], table["rows"]) == table["columns"]
     assert numeric_columns(["a", "b"], [["x", 1], ["y", None]]) == ["b"]
+
+
+@pytest.mark.parametrize(
+    "cell, expected",
+    [
+        ("unknown", None),
+        ("TBD", None),
+        ("(missing)", None),
+        ("Not recorded", None),
+        ("--", None),
+        ("~40", 40),
+        ("≈ 3.5", 3.5),
+        ("<5", 5),
+        ("≥ 12", 12),
+        ("1.2 ± 0.1", 1.2),
+        ("2,610 +/- 30", 2610),
+        ("12†", 12),
+        ("approx. 7", 7),
+        ("Porcini", "Porcini"),  # real text stays text
+        ("x", "x"),  # could be a real label
+    ],
+)
+def test_convert_cell_missing_markers_and_qualifiers(cell, expected):
+    assert _convert_cell(cell) == expected
+
+
+def test_blank_stray_text_in_mostly_numeric_column():
+    columns = ["Month", "Yield (kg)"]
+    rows = [["Jan", 1], ["Feb", 2], ["Mar", "see note"], ["Apr", 4], ["May", 5]]
+
+    new_rows, blanked = blank_stray_text(columns, rows)
+
+    assert [r[1] for r in new_rows] == [1, 2, None, 4, 5]
+    assert blanked == {"Yield (kg)": 1}
+    assert numeric_columns(columns, new_rows) == ["Yield (kg)"]
+    assert rows[2][1] == "see note"  # the input is not changed
+
+
+def test_blank_stray_text_leaves_text_columns_alone():
+    # Mostly text, or only one number: not a numeric column, so nothing is blanked.
+    columns = ["Name", "Code"]
+    rows = [["Ann", "A1"], ["Bo", 7], ["Cy", "C3"], ["Di", "D4"]]
+
+    new_rows, blanked = blank_stray_text(columns, rows)
+
+    assert new_rows == rows
+    assert blanked == {}
 
 
 # ----------------------------------------------------------------------
@@ -314,6 +363,62 @@ async def test_extract_llm_none_is_a_clear_error(context, event_queue, tmp_path)
 
     assert result["status"] == "error"
     assert "Tables found" in result["error"]
+
+
+async def test_extract_llm_string_numbers_are_converted(context, event_queue, tmp_path):
+    # The LLM sometimes returns numbers as strings; they must still be plottable.
+    agent = _make_agent()
+    agent._llm_text = AsyncMock(
+        return_value=json.dumps(
+            {
+                "caption": "Table 9. Harvest",
+                "columns": ["Month", "Yield (kg)", "Price"],
+                "rows": [["Jan", "1,020", "—"], ["Feb", "~40", 3.5], ["Mar", "unknown", "2"]],
+            }
+        )
+    )
+    _serve(agent, tmp_path, "doc.md", ALMANAC)
+
+    result = await agent._execute(
+        {
+            "skill_id": "sixes_extract_table",
+            "document_artifact_id": "d",
+            "table_description": "harvest",
+        },
+        context,
+        event_queue,
+    )
+
+    assert result["status"] == "success", result
+    rows = agent.send_json_artifact.await_args.args[2]["rows"]
+    assert rows == [["Jan", 1020, None], ["Feb", 40, 3.5], ["Mar", None, 2]]
+    assert result["numeric_columns"] == ["Yield (kg)", "Price"]
+
+
+async def test_plot_column_with_stray_text_still_plots(context, event_queue, tmp_path):
+    agent = _make_agent()
+    table = {
+        "caption": "",
+        "columns": ["Month", "Yield (kg)"],
+        "rows": [["Jan", 1], ["Feb", 2], ["Mar", "see note"], ["Apr", 4]],
+    }
+    _serve(agent, tmp_path, "table.json", json.dumps(table))
+
+    result = await agent._execute(
+        {
+            "skill_id": "sixes_plot_table",
+            "table_artifact_id": "t",
+            "x_column": "Month",
+            "y_columns": ["Yield (kg)"],
+        },
+        context,
+        event_queue,
+    )
+
+    assert result["status"] == "success", result
+    assert result["y_columns"] == ["Yield (kg)"]
+    assert result["text_cells_treated_as_missing"] == {"Yield (kg)": 1}
+    agent.send_input_required.assert_not_awaited()
 
 
 async def test_extract_falls_back_to_keywords_without_llm(context, event_queue, tmp_path):

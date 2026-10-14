@@ -59,7 +59,17 @@ _STOPWORDS = {"the", "table", "with", "data", "that", "this", "about", "from", "
 _SEPARATOR_RE = re.compile(r"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$")
 
 # Cells that mean "no value" (the almanac uses an em dash).
-_MISSING = {"", "—", "–", "-", "n/a", "na", "nan", "none", "null", "?", "…", "..."}
+_MISSING = {
+    "", "—", "–", "-", "--", "n/a", "na", "n.a.", "nan", "none", "null", "?", "…", "...",
+    "unknown", "unk", "tbd", "tba", "missing", "(missing)", "not recorded", "not available",
+    "no data", "n.d.",
+}  # fmt: skip
+# Qualifiers around a number that don't change where it goes on a plot:
+# "~40", "≈40", "<5", "≥ 3", "1.2 ± 0.1", "12†". Strip them and keep the number.
+_QUALIFIER_RE = re.compile(r"^(?:[~≈<>≤≥]|ca\.|approx\.?)\s*|\s*(?:±|\+/-)\s*[\d.,]+$|[*†‡]+$")
+# A column counts as numeric when at least this share of its filled cells are numbers;
+# the remaining text cells ("unknown", "see note") are treated as missing for plotting.
+MOSTLY_NUMERIC = 0.75
 # A number with optional thousands separators (comma, space, thin space), decimals,
 # exponent, and percent sign: "1,020", "2 610", "-3.5", "1.2e3", "45%".
 _NUMBER_RE = re.compile(
@@ -88,7 +98,7 @@ def _convert_cell(cell: Any) -> Any:
     text = cell.strip().strip("*`").strip()
     if text.lower() in _MISSING:
         return None
-    candidate = text.replace("−", "-")  # unicode minus sign
+    candidate = _QUALIFIER_RE.sub("", text.replace("−", "-")).strip()  # unicode minus sign
     if not _NUMBER_RE.fullmatch(candidate):
         return text
     candidate = re.sub(r"[,    %]", "", candidate)
@@ -295,14 +305,42 @@ def match_column(requested: str, columns: list[str]) -> str | None:
     return None
 
 
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def numeric_columns(columns: list[str], rows: list[list[Any]]) -> list[str]:
     """Columns whose non-missing values are all numbers (and that have at least one)."""
     result = []
     for i, name in enumerate(columns):
         values = [r[i] for r in rows if i < len(r) and r[i] is not None]
-        if values and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+        if values and all(_is_number(v) for v in values):
             result.append(name)
     return result
+
+
+def blank_stray_text(
+    columns: list[str], rows: list[list[Any]]
+) -> tuple[list[list[Any]], dict[str, int]]:
+    """Treat stray text cells in mostly-numeric columns as missing.
+
+    One "unknown" in a column of numbers would otherwise make the whole column
+    unplottable. A column needs at least two numbers and ``MOSTLY_NUMERIC`` of its
+    filled cells numeric; text-heavy columns (names, months) are left alone.
+    Returns ``(new rows, {column: number of cells blanked})``. The input is not changed.
+    """
+    new_rows = [list(r) for r in rows]
+    blanked: dict[str, int] = {}
+    for i, name in enumerate(columns):
+        values = [r[i] for r in new_rows if i < len(r) and r[i] is not None]
+        numbers = sum(_is_number(v) for v in values)
+        if numbers < 2 or numbers == len(values) or numbers / len(values) < MOSTLY_NUMERIC:
+            continue
+        for r in new_rows:
+            if i < len(r) and r[i] is not None and not _is_number(r[i]):
+                r[i] = None
+        blanked[name] = len(values) - numbers
+    return new_rows, blanked
 
 
 def table_to_markdown(columns: list[str], rows: list[list[Any]], max_chars: int | None = None) -> str:
@@ -488,7 +526,8 @@ class ReadExtractPlotAgent(PrometheusAgent):
             "table_artifact_id": table_artifact_id,
             "caption": caption,
             "columns": columns,
-            "numeric_columns": numeric_columns(columns, rows),
+            # What sixes_plot_table can plot, after it blanks stray text cells.
+            "numeric_columns": numeric_columns(columns, blank_stray_text(columns, rows)[0]),
             "row_count": len(rows),
             # The actual data, so the orchestrator can answer questions about it.
             "table_markdown": table_to_markdown(columns, rows, TABLE_RESULT_CHARS),
@@ -619,9 +658,10 @@ class ReadExtractPlotAgent(PrometheusAgent):
             return None
         columns = _clean_columns([str(c) for c in columns])
         cleaned_rows = [
-            # Pad or trim to the header width; a stray missing marker still becomes None.
-            [None if isinstance(c, str) and c.strip().lower() in _MISSING else c
-             for c in (list(r) + [None] * len(columns))[: len(columns)]]
+            # Pad or trim to the header width. String cells go through the same cleaner
+            # as the regex parser, so "1,020" -> 1020 and "—" -> None even if the LLM
+            # left them as text.
+            [_convert_cell(c) for c in (list(r) + [None] * len(columns))[: len(columns)]]
             for r in rows
             if isinstance(r, list)
         ]
@@ -704,6 +744,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
         rows: list[list[Any]] = table["rows"]
         if not rows:
             return {"status": "error", "error": "That table has no rows to plot."}
+        rows, blanked = blank_stray_text(columns, rows)
         numeric = numeric_columns(columns, rows)
         if not numeric:
             return {
@@ -812,6 +853,10 @@ class ReadExtractPlotAgent(PrometheusAgent):
         }
         if non_numeric_y:
             result["skipped_non_numeric_columns"] = non_numeric_y
+        # Tell the user which text cells were left out, so nothing vanishes silently.
+        used = {c: n for c, n in blanked.items() if c == x_column or c in y_columns}
+        if used:
+            result["text_cells_treated_as_missing"] = used
         return result
 
     def _claim_plot_number(self, ctx: str) -> int:
