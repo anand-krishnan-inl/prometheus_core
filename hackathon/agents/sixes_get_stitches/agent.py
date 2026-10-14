@@ -95,8 +95,11 @@ class ReadExtractPlotAgent(PrometheusAgent):
         # ------------------------------------------------------------------
         document_artifact_id = params.get("document_artifact_id")
         table_description = params.get("table_description")
-        #if not input_data:
-        #    return {"status": "error", "error": "input_data is required"}
+        if not document_artifact_id or not table_description:
+            return {
+                "status": "error",
+                "error": "document_artifact_id and table_description are required",
+            }
 
         # ------------------------------------------------------------------
         # 2. Send optional progress updates so the UI stays responsive.
@@ -126,9 +129,9 @@ class ReadExtractPlotAgent(PrometheusAgent):
             "status": "success",
             "input_received": {
                 "document_artifact_id": document_artifact_id,
-                "table_description": str(source_path),
+                "table_description": table_description,
             },
-            "message": f"{str(source_path)} is the output",
+            "message": "Replace this with your agent's processing logic.",
         }
         
 
