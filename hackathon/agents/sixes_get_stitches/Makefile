@@ -30,11 +30,9 @@ COMPOSE_NET :=
 endif
 
 COMPOSE_LINUX :=
-ifeq ($(NETWORK_MODE),external)
   ifeq ($(UNAME), Linux)
     COMPOSE_LINUX := $(if $(wildcard docker-compose.linux.yml),-f docker-compose.linux.yml,)
   endif
-endif
 
 COMPOSE_FILES := $(strip -f $(COMPOSE_BASE) $(COMPOSE_NET) $(COMPOSE_LINUX))
 
@@ -70,10 +68,13 @@ endif
 
 up: ##@ Build and start the agent (detached)
 up: validate-network
+	cp ../../../platform/.env .
 	$(COMPOSE) $(COMPOSE_FILES) up --build -d
 
 up-fg: ##@ Build and start the agent (foreground)
 up-fg: validate-network
+	echo $(NETWORK_MODE)
+	echo $(UNAME)
 	$(COMPOSE) $(COMPOSE_FILES) up --build
 
 down: ##@ Stop and remove the agent

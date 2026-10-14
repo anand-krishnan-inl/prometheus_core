@@ -1,0 +1,48 @@
+# LiteLLM Proxy Configuration
+# Used as the A2A agent gateway and shared LLM proxy.
+# Agent registration is done at runtime via POST /v1/agents.
+# Runtime agents use the generic aliases configured here through LLMClient.
+
+model_list:
+  - model_name: default
+    litellm_params:
+      model: gpt-5.4-mini
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://aoai-eastus2-pad.openai.azure.com/openai/v1
+
+  - model_name: small
+    litellm_params:
+      model: gpt-5.4-mini
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://aoai-eastus2-pad.openai.azure.com/openai/v1
+
+  - model_name: medium
+    litellm_params:
+      model: gpt-5.4-mini
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://aoai-eastus2-pad.openai.azure.com/openai/v1
+
+  - model_name: large
+    litellm_params:
+      model: gpt-5.4-mini
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://aoai-eastus2-pad.openai.azure.com/openai/v1
+
+  - model_name: vision
+    litellm_params:
+      model: gpt-5.4-mini
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://aoai-eastus2-pad.openai.azure.com/openai/v1
+
+  - model_name: embedding
+    litellm_params:
+      model: gpt-5.4-mini
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: https://aoai-eastus2-pad.openai.azure.com/openai/v1
+
+
+general_settings:
+  master_key: "os.environ/LITELLM_MASTER_KEY"
+  database_url: "os.environ/DATABASE_URL"
+  store_model_in_db: true
+  forward_client_headers_to_llm_api: true
