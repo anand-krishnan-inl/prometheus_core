@@ -81,7 +81,9 @@ uv run ruff check .           # lint
 ## Run with Docker
 
 Optionally set `PROMETHEUS_API_BASE_IMAGE_HASH` in `.env` (find the current value in
-`platform/Makefile`), or let it default to `latest`, then:
+`platform/Makefile`), or let it default to `latest`. Without registry access, set
+`LOCAL_SDK=true` instead to build FROM the `prometheus_api:local` image the platform
+builds (`make base-image` in `platform/`). Then:
 
 ```bash
 make up-fg       # build + start in the foreground (Ctrl-C to stop)
@@ -151,6 +153,7 @@ DeepLynx file storage.
 | `LITELLM_MASTER_KEY` | LiteLLM gateway auth. |
 | `REDIS_URL` / `REDIS_PASSWORD` | Conversation state and artifact registry. |
 | `PROMETHEUS_API_BASE_IMAGE_HASH` | Base image tag the Dockerfile builds from. |
+| `LOCAL_SDK` | `true` builds FROM the locally built `prometheus_api:local` instead of the registry. |
 | `JWKS_URL` | Multi-user identity (recommended): the platform operator's JWKS URL — point it at the **platform backend** (`https://<platform-host>/.well-known/jwks.json`), not at another agent. Fetches the verification key automatically, including any rotation done through the platform's admin UI. See below. |
 | `USER_IDENTITY_PUBLIC_KEY` | Multi-user identity (alternative to `JWKS_URL`): a static public key from the platform operator. **Never** the private key — this agent only verifies. Won't observe a key rotated through the admin UI; re-ask the operator for the new key if verification starts failing. |
 | `USER_IDENTITY_ISS` / `USER_IDENTITY_AUD` | Must match the platform operator's values exactly. |
