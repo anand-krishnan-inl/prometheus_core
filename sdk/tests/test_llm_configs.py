@@ -35,6 +35,8 @@ def test_packaged_llm_config_paths_are_readable():
         "anthropic",
         "openai",
         "anl_asksage",
+        "azure",
+        "gemma",
     )
 
     for profile in LLM_CONFIG_PROFILES:
