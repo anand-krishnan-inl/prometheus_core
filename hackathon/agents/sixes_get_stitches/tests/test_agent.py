@@ -17,6 +17,7 @@ tested through `_execute` with the artifact store, the LLM, DeepLynx, and the
 context state mocked. Run with `uv run pytest`.
 """
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +33,7 @@ from agent import (
     numeric_columns,
     parse_csv_table,
     parse_markdown_tables,
+    plot_title,
     table_to_markdown,
 )
 
@@ -405,6 +407,28 @@ async def test_plot_numbers_each_plot_in_a_conversation(context, event_queue, tm
     assert agent.send_deeplynx_artifact.await_args.kwargs["name"] == "plot3.png"
     agent.save_context_state.assert_called_with("test-conversation", {"plot_count": 3})
 
+
+
+async def test_plot_all_tables_at_once_gets_distinct_names(context, event_queue, tmp_path):
+    # "Plot all tables": the orchestrator runs several plots concurrently.
+    agent = _make_agent()
+    _serve(agent, tmp_path, "table.json", _table_json())
+    store: dict = {}
+    agent.load_context_state = MagicMock(side_effect=lambda ctx: dict(store.get(ctx, {})))
+    agent.save_context_state = MagicMock(side_effect=lambda ctx, st: store.__setitem__(ctx, st))
+
+    params = {"skill_id": "sixes_plot_table", "table_artifact_id": "t"}
+    results = await asyncio.gather(
+        *(agent._execute(dict(params), context, event_queue) for _ in range(3))
+    )
+
+    assert sorted(r["plot_name"] for r in results) == ["plot1.png", "plot2.png", "plot3.png"]
+
+
+def test_plot_title_is_short_and_drops_units():
+    assert plot_title("Year", ["Brie Basin (residents)"]) == "Brie Basin vs Year"
+    assert plot_title("t [min]", ["T [K]", "p [bar]"]) == "T and p vs t"
+    assert plot_title("x", ["a", "b", "c", "d"]) == "a, b and 2 more vs x"
 
 async def test_plot_csv_directly(context, event_queue, tmp_path):
     agent = _make_agent()

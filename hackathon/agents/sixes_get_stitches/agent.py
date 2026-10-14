@@ -335,6 +335,15 @@ def default_columns(columns: list[str], numeric: list[str]) -> tuple[str, list[s
     return x_column, y_columns
 
 
+def plot_title(x_column: str, y_columns: list[str]) -> str:
+    """A short title like 'Porcini yield vs Month'; units stay on the axes and legend."""
+    names = [_strip_units(c) or c for c in y_columns]
+    if len(names) > 3:
+        names = names[:2] + [f"{len(names) - 2} more"]
+    y_part = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return f"{y_part} vs {_strip_units(x_column) or x_column}"
+
+
 # Keep the table we hand back to the orchestrator under its 6000-char result cap.
 TABLE_RESULT_CHARS = 4500
 
@@ -663,10 +672,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
         # and the Python state is gone: load what was saved before asking.
         ctx = str(context.context_id)
         provided = self.get_provided_inputs(context)
-        saved = self.load_context_state(ctx) or {}
-        state = saved if provided else {}
-        # Number the plots per conversation (plot1.png, plot2.png, …) so each one is kept.
-        plot_count = int(saved.get("plot_count") or 0)
+        state = (self.load_context_state(ctx) or {}) if provided else {}
 
         table_artifact_id = params.get("table_artifact_id") or state.get("table_artifact_id")
         chart_type = str(params.get("chart_type") or state.get("chart_type") or "line")
@@ -742,12 +748,13 @@ class ReadExtractPlotAgent(PrometheusAgent):
                 )
             )
         if missing:
+            # Merge into the saved state so the plot counter survives the question.
             self.save_context_state(
                 ctx,
                 {
+                    **(self.load_context_state(ctx) or {}),
                     "table_artifact_id": table_artifact_id,
                     "chart_type": chart_type,
-                    "plot_count": plot_count,
                 },
             )
             hint = "Choose the columns to plot."
@@ -766,8 +773,8 @@ class ReadExtractPlotAgent(PrometheusAgent):
             message=f"Plotting {', '.join(y_columns)} vs {x_column}…",
         )
 
-        title = table.get("caption") or f"{', '.join(y_columns)} vs {x_column}"
-        plot_name = f"plot{plot_count + 1}.png"
+        title = plot_title(x_column, y_columns)
+        plot_name = f"plot{self._claim_plot_number(ctx)}.png"
         with tempfile.TemporaryDirectory() as tmp:
             png = Path(tmp) / plot_name
             try:
@@ -795,8 +802,6 @@ class ReadExtractPlotAgent(PrometheusAgent):
                     "error": "I drew the plot but could not store it. Check the DeepLynx "
                     "settings in the agent's .env (/diagnose can help).",
                 }
-        # Only count plots that were stored; drop the follow-up state now that we're done.
-        self.save_context_state(ctx, {"plot_count": plot_count + 1})
         result = {
             "status": "success",
             "artifact_id": ref.artifact_id,
@@ -808,6 +813,19 @@ class ReadExtractPlotAgent(PrometheusAgent):
         if non_numeric_y:
             result["skipped_non_numeric_columns"] = non_numeric_y
         return result
+
+    def _claim_plot_number(self, ctx: str) -> int:
+        """Reserve the next plot number in this conversation (1, 2, 3, …).
+
+        "Plot all tables" makes the orchestrator call this skill several times at
+        once, so the read and the write happen together with no ``await`` between
+        them: each concurrent call gets its own number. A plot that later fails
+        leaves a gap in the numbering, never a duplicate.
+        """
+        state = self.load_context_state(ctx) or {}
+        number = int(state.get("plot_count") or 0) + 1
+        self.save_context_state(ctx, {**state, "plot_count": number})
+        return number
 
     async def _resolve_columns(
         self,
@@ -943,7 +961,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
         shared_unit = units.pop().strip() if len(units) == 1 else ""
         ylabel = y_columns[0] if len(y_columns) == 1 else shared_unit or ", ".join(y_columns)
         ax.set_ylabel(textwrap.fill(ylabel, 50))
-        ax.set_title(textwrap.fill(title, 90), fontsize=10)
+        ax.set_title(textwrap.fill(title, 70), fontsize=12)
         if len(y_columns) > 1:
             ax.legend()
         ax.grid(alpha=0.3)
