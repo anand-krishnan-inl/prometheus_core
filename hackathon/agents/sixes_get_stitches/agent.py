@@ -406,13 +406,19 @@ class ReadExtractPlotAgent(PrometheusAgent):
         except FileNotFoundError as exc:
             raise ValueError("That artifact is not in this conversation.") from exc
 
-    async def _llm_text(self, prompt: str, context: RequestContext, max_tokens: int) -> str:
-        """Ask the LLM a short question. Raises on any LLM failure; callers fall back."""
+    async def _llm_text(
+        self, prompt: str, context: RequestContext, max_tokens: int, size: str = "medium"
+    ) -> str:
+        """Ask the LLM a question. Raises on any LLM failure; callers fall back.
+
+        ``size`` picks the model tier: "medium" for short questions, "large" for
+        reading a whole document.
+        """
         cfg = LLMConfig.from_env()
         if cfg.proxy_url:  # only the platform's LiteLLM proxy needs the master key
             cfg = cfg.with_api_key(os.getenv("LITELLM_MASTER_KEY"))
         async with self.llm_client(context, config=cfg) as llm:
-            response = await llm.medium(prompt, max_tokens=max_tokens)
+            response = await getattr(llm, size)(prompt, max_tokens=max_tokens)
         return response.text or ""
 
     # ----------------------------------------------------------------------
@@ -519,10 +525,21 @@ class ReadExtractPlotAgent(PrometheusAgent):
         Returns ``(caption, columns, rows)``. Raises ``ValueError`` with a
         user-readable message when no table matches.
 
-        Order of attempts: an explicit "Table N" in the description, the only
-        table in the document, the LLM's pick, then keyword overlap (only if
-        the LLM could not be reached; an LLM "none" is final).
+        First the LLM reads the whole document and returns the table with typed
+        values (numbers as numbers, words as strings, missing as null). If the
+        LLM fails, fall back to the regex parser: an explicit "Table N" in the
+        description, the only table in the document, the LLM's pick, then
+        keyword overlap (only if the LLM could not be reached; an LLM "none" is final).
         """
+        await self.send_status_update(
+            context=context,
+            event_queue=event_queue,
+            message="Asking the LLM to find and read the table…",
+        )
+        extracted = await self._extract_with_llm(markdown, table_description, context)
+        if extracted is not None:
+            return extracted
+
         tables = parse_markdown_tables(markdown)
         if not tables:
             hint = " If it is a CSV file, plot it directly." if "," in markdown else ""
@@ -553,6 +570,54 @@ class ReadExtractPlotAgent(PrometheusAgent):
                 f"Tables found: {captions}"
             )
         return table["caption"], table["columns"], table["rows"]
+
+    async def _extract_with_llm(
+        self, markdown: str, description: str, context: RequestContext
+    ) -> tuple[str, list[str], list[list[Any]]] | None:
+        """Have the LLM find the table and type each cell.
+
+        Returns ``(caption, columns, rows)``. Raises ``ValueError`` when the LLM
+        says no table matches. Returns ``None`` when the LLM fails or replies
+        with something unusable, so the caller can fall back to the regex parser.
+        """
+        prompt = (
+            "You extract one table from a document. Find the table that best matches the "
+            "user's description (users often name the topic in other words, or say 'Table N').\n"
+            "Reply with ONLY a JSON object, no prose and no code fence:\n"
+            '{"caption": "the table caption", "columns": ["header", ...], '
+            '"rows": [[cell, ...], ...]}\n'
+            "Rules for cells:\n"
+            "- Numbers become JSON numbers: drop thousands separators and % signs "
+            '("1,020" -> 1020, "45%" -> 45, "−3.5" -> -3.5).\n'
+            "- Words, names and labels stay JSON strings.\n"
+            "- Missing values (blank, —, n/a, ?) become null.\n"
+            "- Every row has exactly one cell per column. Copy values; never invent them.\n"
+            'If no table in the document matches, reply {"none": true}.\n\n'
+            f"Description: {description}\n\nDocument:\n{markdown}"
+        )
+        try:
+            text = await self._llm_text(prompt, context, max_tokens=8000, size="large")
+            found = re.search(r"\{.*\}", text, re.DOTALL)
+            answer = json.loads(found.group()) if found else None
+        except Exception:
+            logger.exception("LLM table extraction failed; falling back to the regex parser")
+            return None
+        if not isinstance(answer, dict):
+            return None
+        if answer.get("none"):
+            raise ValueError(f"No table in that document matches '{description}'.")
+        columns, rows = answer.get("columns"), answer.get("rows")
+        if not isinstance(columns, list) or len(columns) < 2 or not isinstance(rows, list):
+            return None
+        columns = _clean_columns([str(c) for c in columns])
+        cleaned_rows = [
+            # Pad or trim to the header width; a stray missing marker still becomes None.
+            [None if isinstance(c, str) and c.strip().lower() in _MISSING else c
+             for c in (list(r) + [None] * len(columns))[: len(columns)]]
+            for r in rows
+            if isinstance(r, list)
+        ]
+        return str(answer.get("caption") or ""), columns, cleaned_rows
 
     async def _pick_with_llm(
         self, tables: list[dict[str, Any]], description: str, context: RequestContext
