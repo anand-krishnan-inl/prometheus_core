@@ -17,6 +17,7 @@ tested through `_execute` with the artifact store, the LLM, DeepLynx, and the
 context state mocked. Run with `uv run pytest`.
 """
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,12 +28,15 @@ import pytest
 import agent as agent_module
 from agent import (
     ReadExtractPlotAgent,
+    _convert_cell,
+    blank_stray_text,
     load_table_file,
     match_column,
     numeric_columns,
-    table_to_markdown,
     parse_csv_table,
     parse_markdown_tables,
+    plot_title,
+    table_to_markdown,
 )
 
 ALMANAC = """\
@@ -70,7 +74,7 @@ CSV = "night,mice_sighted,cheese_lost_kg,tunnel_temperature_C\n1,14,0.8,4.1\n2,1
 def _make_agent() -> ReadExtractPlotAgent:
     # agent_card.json is loaded lazily by run()/build_app(), not by the
     # constructor, so unit tests can instantiate the agent directly.
-    agent = ReadExtractPlotAgent(agent_name="Read Extract Plot Agent")
+    agent = ReadExtractPlotAgent(agent_name="Sixes Get Stitches Table Plot Agent")
     agent.send_status_update = AsyncMock()
     agent.send_json_artifact = AsyncMock(return_value="table-123")
     agent.send_deeplynx_artifact = AsyncMock(return_value=SimpleNamespace(artifact_id="png-456"))
@@ -145,6 +149,53 @@ def test_numeric_columns_skips_text_and_allows_missing():
     assert numeric_columns(["a", "b"], [["x", 1], ["y", None]]) == ["b"]
 
 
+@pytest.mark.parametrize(
+    "cell, expected",
+    [
+        ("unknown", None),
+        ("TBD", None),
+        ("(missing)", None),
+        ("Not recorded", None),
+        ("--", None),
+        ("~40", 40),
+        ("≈ 3.5", 3.5),
+        ("<5", 5),
+        ("≥ 12", 12),
+        ("1.2 ± 0.1", 1.2),
+        ("2,610 +/- 30", 2610),
+        ("12†", 12),
+        ("approx. 7", 7),
+        ("Porcini", "Porcini"),  # real text stays text
+        ("x", "x"),  # could be a real label
+    ],
+)
+def test_convert_cell_missing_markers_and_qualifiers(cell, expected):
+    assert _convert_cell(cell) == expected
+
+
+def test_blank_stray_text_in_mostly_numeric_column():
+    columns = ["Month", "Yield (kg)"]
+    rows = [["Jan", 1], ["Feb", 2], ["Mar", "see note"], ["Apr", 4], ["May", 5]]
+
+    new_rows, blanked = blank_stray_text(columns, rows)
+
+    assert [r[1] for r in new_rows] == [1, 2, None, 4, 5]
+    assert blanked == {"Yield (kg)": 1}
+    assert numeric_columns(columns, new_rows) == ["Yield (kg)"]
+    assert rows[2][1] == "see note"  # the input is not changed
+
+
+def test_blank_stray_text_leaves_text_columns_alone():
+    # Mostly text, or only one number: not a numeric column, so nothing is blanked.
+    columns = ["Name", "Code"]
+    rows = [["Ann", "A1"], ["Bo", 7], ["Cy", "C3"], ["Di", "D4"]]
+
+    new_rows, blanked = blank_stray_text(columns, rows)
+
+    assert new_rows == rows
+    assert blanked == {}
+
+
 # ----------------------------------------------------------------------
 # Column matching
 # ----------------------------------------------------------------------
@@ -186,7 +237,7 @@ async def test_unexpected_exception_becomes_error_message(context, event_queue):
     agent.get_artifact_file_path = AsyncMock(side_effect=RuntimeError("boom"))
 
     result = await agent._execute(
-        {"skill_id": "extract_table", "document_artifact_id": "d", "table_description": "x"},
+        {"skill_id": "sixes_extract_table", "document_artifact_id": "d", "table_description": "x"},
         context,
         event_queue,
     )
@@ -196,12 +247,12 @@ async def test_unexpected_exception_becomes_error_message(context, event_queue):
 
 
 # ----------------------------------------------------------------------
-# extract_table
+# sixes_extract_table
 # ----------------------------------------------------------------------
 
 
 async def test_extract_requires_inputs(context, event_queue):
-    result = await _make_agent()._execute({"skill_id": "extract_table"}, context, event_queue)
+    result = await _make_agent()._execute({"skill_id": "sixes_extract_table"}, context, event_queue)
 
     assert result["status"] == "error"
 
@@ -211,7 +262,7 @@ async def test_extract_by_table_number(context, event_queue, tmp_path):
     _serve(agent, tmp_path, "doc.md", ALMANAC)
 
     result = await agent._execute(
-        {"skill_id": "extract_table", "document_artifact_id": "d", "table_description": "Table 3"},
+        {"skill_id": "sixes_extract_table", "document_artifact_id": "d", "table_description": "Table 3"},
         context,
         event_queue,
     )
@@ -226,7 +277,7 @@ async def test_extract_returns_table_data(context, event_queue, tmp_path):
     _serve(agent, tmp_path, "doc.md", ALMANAC)
 
     result = await agent._execute(
-        {"skill_id": "extract_table", "document_artifact_id": "d", "table_description": "Table 3"},
+        {"skill_id": "sixes_extract_table", "document_artifact_id": "d", "table_description": "Table 3"},
         context,
         event_queue,
     )
@@ -243,7 +294,7 @@ async def test_extract_answers_question(context, event_queue, tmp_path):
 
     result = await agent._execute(
         {
-            "skill_id": "extract_table",
+            "skill_id": "sixes_extract_table",
             "document_artifact_id": "d",
             "table_description": "Table 3",
             "question": "What is the largest value?",
@@ -268,7 +319,7 @@ async def test_extract_unknown_table_number(context, event_queue, tmp_path):
     _serve(agent, tmp_path, "doc.md", ALMANAC)
 
     result = await agent._execute(
-        {"skill_id": "extract_table", "document_artifact_id": "d", "table_description": "Table 9"},
+        {"skill_id": "sixes_extract_table", "document_artifact_id": "d", "table_description": "Table 9"},
         context,
         event_queue,
     )
@@ -284,7 +335,7 @@ async def test_extract_uses_llm_pick(context, event_queue, tmp_path):
 
     result = await agent._execute(
         {
-            "skill_id": "extract_table",
+            "skill_id": "sixes_extract_table",
             "document_artifact_id": "d",
             "table_description": "how many people live in each settlement",
         },
@@ -302,7 +353,7 @@ async def test_extract_llm_none_is_a_clear_error(context, event_queue, tmp_path)
 
     result = await agent._execute(
         {
-            "skill_id": "extract_table",
+            "skill_id": "sixes_extract_table",
             "document_artifact_id": "d",
             "table_description": "the dragon register",
         },
@@ -314,13 +365,69 @@ async def test_extract_llm_none_is_a_clear_error(context, event_queue, tmp_path)
     assert "Tables found" in result["error"]
 
 
+async def test_extract_llm_string_numbers_are_converted(context, event_queue, tmp_path):
+    # The LLM sometimes returns numbers as strings; they must still be plottable.
+    agent = _make_agent()
+    agent._llm_text = AsyncMock(
+        return_value=json.dumps(
+            {
+                "caption": "Table 9. Harvest",
+                "columns": ["Month", "Yield (kg)", "Price"],
+                "rows": [["Jan", "1,020", "—"], ["Feb", "~40", 3.5], ["Mar", "unknown", "2"]],
+            }
+        )
+    )
+    _serve(agent, tmp_path, "doc.md", ALMANAC)
+
+    result = await agent._execute(
+        {
+            "skill_id": "sixes_extract_table",
+            "document_artifact_id": "d",
+            "table_description": "harvest",
+        },
+        context,
+        event_queue,
+    )
+
+    assert result["status"] == "success", result
+    rows = agent.send_json_artifact.await_args.args[2]["rows"]
+    assert rows == [["Jan", 1020, None], ["Feb", 40, 3.5], ["Mar", None, 2]]
+    assert result["numeric_columns"] == ["Yield (kg)", "Price"]
+
+
+async def test_plot_column_with_stray_text_still_plots(context, event_queue, tmp_path):
+    agent = _make_agent()
+    table = {
+        "caption": "",
+        "columns": ["Month", "Yield (kg)"],
+        "rows": [["Jan", 1], ["Feb", 2], ["Mar", "see note"], ["Apr", 4]],
+    }
+    _serve(agent, tmp_path, "table.json", json.dumps(table))
+
+    result = await agent._execute(
+        {
+            "skill_id": "sixes_plot_table",
+            "table_artifact_id": "t",
+            "x_column": "Month",
+            "y_columns": ["Yield (kg)"],
+        },
+        context,
+        event_queue,
+    )
+
+    assert result["status"] == "success", result
+    assert result["y_columns"] == ["Yield (kg)"]
+    assert result["text_cells_treated_as_missing"] == {"Yield (kg)": 1}
+    agent.send_input_required.assert_not_awaited()
+
+
 async def test_extract_falls_back_to_keywords_without_llm(context, event_queue, tmp_path):
     agent = _make_agent()
     _serve(agent, tmp_path, "doc.md", ALMANAC)
 
     result = await agent._execute(
         {
-            "skill_id": "extract_table",
+            "skill_id": "sixes_extract_table",
             "document_artifact_id": "d",
             "table_description": "the census population table",
         },
@@ -336,7 +443,7 @@ async def test_extract_document_without_tables(context, event_queue, tmp_path):
     _serve(agent, tmp_path, "doc.md", "just prose\n")
 
     result = await agent._execute(
-        {"skill_id": "extract_table", "document_artifact_id": "d", "table_description": "x"},
+        {"skill_id": "sixes_extract_table", "document_artifact_id": "d", "table_description": "x"},
         context,
         event_queue,
     )
@@ -350,7 +457,7 @@ async def test_extract_missing_artifact(context, event_queue):
     agent.get_artifact_file_path = AsyncMock(side_effect=FileNotFoundError)
 
     result = await agent._execute(
-        {"skill_id": "extract_table", "document_artifact_id": "d", "table_description": "x"},
+        {"skill_id": "sixes_extract_table", "document_artifact_id": "d", "table_description": "x"},
         context,
         event_queue,
     )
@@ -359,7 +466,7 @@ async def test_extract_missing_artifact(context, event_queue):
 
 
 # ----------------------------------------------------------------------
-# plot_table
+# sixes_plot_table
 # ----------------------------------------------------------------------
 
 
@@ -374,7 +481,7 @@ async def test_plot_table_artifact(context, event_queue, tmp_path):
 
     result = await agent._execute(
         {
-            "skill_id": "plot_table",
+            "skill_id": "sixes_plot_table",
             "table_artifact_id": "t",
             "x_column": "year",
             "y_columns": ["Brie Basin", "Camembert Ridge"],
@@ -388,8 +495,45 @@ async def test_plot_table_artifact(context, event_queue, tmp_path):
     assert result["y_columns"] == ["Brie Basin (residents)", "Camembert Ridge (residents)"]
     png = agent.send_deeplynx_artifact.await_args.kwargs["file_path"]
     assert agent.send_deeplynx_artifact.await_args.kwargs["mime_type"] == "image/png"
-    assert png.name == "plot.png"
+    assert png.name == "plot1.png"
+    agent.save_context_state.assert_called_with("test-conversation", {"plot_count": 1})
 
+
+async def test_plot_numbers_each_plot_in_a_conversation(context, event_queue, tmp_path):
+    agent = _make_agent()
+    _serve(agent, tmp_path, "table.json", _table_json())
+    agent.load_context_state = MagicMock(return_value={"plot_count": 2})
+
+    result = await agent._execute(
+        {"skill_id": "sixes_plot_table", "table_artifact_id": "t"}, context, event_queue
+    )
+
+    assert result["plot_name"] == "plot3.png", result
+    assert agent.send_deeplynx_artifact.await_args.kwargs["name"] == "plot3.png"
+    agent.save_context_state.assert_called_with("test-conversation", {"plot_count": 3})
+
+
+
+async def test_plot_all_tables_at_once_gets_distinct_names(context, event_queue, tmp_path):
+    # "Plot all tables": the orchestrator runs several plots concurrently.
+    agent = _make_agent()
+    _serve(agent, tmp_path, "table.json", _table_json())
+    store: dict = {}
+    agent.load_context_state = MagicMock(side_effect=lambda ctx: dict(store.get(ctx, {})))
+    agent.save_context_state = MagicMock(side_effect=lambda ctx, st: store.__setitem__(ctx, st))
+
+    params = {"skill_id": "sixes_plot_table", "table_artifact_id": "t"}
+    results = await asyncio.gather(
+        *(agent._execute(dict(params), context, event_queue) for _ in range(3))
+    )
+
+    assert sorted(r["plot_name"] for r in results) == ["plot1.png", "plot2.png", "plot3.png"]
+
+
+def test_plot_title_is_short_and_drops_units():
+    assert plot_title("Year", ["Brie Basin (residents)"]) == "Brie Basin vs Year"
+    assert plot_title("t [min]", ["T [K]", "p [bar]"]) == "T and p vs t"
+    assert plot_title("x", ["a", "b", "c", "d"]) == "a, b and 2 more vs x"
 
 async def test_plot_csv_directly(context, event_queue, tmp_path):
     agent = _make_agent()
@@ -397,7 +541,7 @@ async def test_plot_csv_directly(context, event_queue, tmp_path):
 
     result = await agent._execute(
         {
-            "skill_id": "plot_table",
+            "skill_id": "sixes_plot_table",
             "table_artifact_id": "c",
             "x_column": "night",
             "y_columns": "mice_sighted",
@@ -416,7 +560,7 @@ async def test_plot_without_columns_uses_defaults(context, event_queue, tmp_path
     _serve(agent, tmp_path, "sightings.csv", CSV)
 
     result = await agent._execute(
-        {"skill_id": "plot_table", "table_artifact_id": "c"}, context, event_queue
+        {"skill_id": "sixes_plot_table", "table_artifact_id": "c"}, context, event_queue
     )
 
     assert result["status"] == "success", result
@@ -435,7 +579,7 @@ async def test_plot_resumes_with_answers(context, event_queue, tmp_path):
         return_value={"table_artifact_id": "c", "chart_type": "scatter"}
     )
 
-    result = await agent._execute({"skill_id": "plot_table"}, context, event_queue)
+    result = await agent._execute({"skill_id": "sixes_plot_table"}, context, event_queue)
 
     assert result["status"] == "success", result
     assert result["chart_type"] == "scatter"
@@ -448,7 +592,7 @@ async def test_plot_unmatched_column_asks_instead_of_guessing(context, event_que
 
     result = await agent._execute(
         {
-            "skill_id": "plot_table",
+            "skill_id": "sixes_plot_table",
             "table_artifact_id": "c",
             "x_column": "night",
             "y_columns": ["pressure"],
@@ -468,7 +612,7 @@ async def test_plot_llm_maps_user_words(context, event_queue, tmp_path):
 
     result = await agent._execute(
         {
-            "skill_id": "plot_table",
+            "skill_id": "sixes_plot_table",
             "table_artifact_id": "c",
             "x_column": "night",
             "y_columns": ["temperature"],
@@ -487,7 +631,7 @@ async def test_plot_ignores_llm_invented_columns(context, event_queue, tmp_path)
 
     result = await agent._execute(
         {
-            "skill_id": "plot_table",
+            "skill_id": "sixes_plot_table",
             "table_artifact_id": "c",
             "x_column": "night",
             "y_columns": ["heat"],
@@ -505,7 +649,7 @@ async def test_plot_text_only_column_asks_for_numeric(context, event_queue, tmp_
 
     result = await agent._execute(
         {
-            "skill_id": "plot_table",
+            "skill_id": "sixes_plot_table",
             "table_artifact_id": "t",
             "x_column": "Call sign",
             "y_columns": ["Condition"],
@@ -520,7 +664,7 @@ async def test_plot_text_only_column_asks_for_numeric(context, event_queue, tmp_
 
 async def test_plot_rejects_bad_chart_type(context, event_queue):
     result = await _make_agent()._execute(
-        {"skill_id": "plot_table", "table_artifact_id": "t", "chart_type": "pie"},
+        {"skill_id": "sixes_plot_table", "table_artifact_id": "t", "chart_type": "pie"},
         context,
         event_queue,
     )
@@ -534,7 +678,7 @@ async def test_plot_wrong_file_type(context, event_queue, tmp_path):
     _serve(agent, tmp_path, "photo.png", b"\x89PNG\r\n\x1a\n\xff\xfe\x00")
 
     result = await agent._execute(
-        {"skill_id": "plot_table", "table_artifact_id": "p", "x_column": "a", "y_columns": "b"},
+        {"skill_id": "sixes_plot_table", "table_artifact_id": "p", "x_column": "a", "y_columns": "b"},
         context,
         event_queue,
     )
@@ -550,7 +694,7 @@ async def test_plot_upload_failure_is_reported(context, event_queue, tmp_path):
 
     result = await agent._execute(
         {
-            "skill_id": "plot_table",
+            "skill_id": "sixes_plot_table",
             "table_artifact_id": "c",
             "x_column": "night",
             "y_columns": "mice_sighted",

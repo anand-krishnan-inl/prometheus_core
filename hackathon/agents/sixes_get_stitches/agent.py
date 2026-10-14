@@ -37,7 +37,6 @@ import tempfile
 import textwrap
 from pathlib import Path
 from typing import Any
-#import aiofiles
 
 from matplotlib.figure import Figure
 from prometheus_api.agent import EventQueue, MissingInput, PrometheusAgent, RequestContext
@@ -60,7 +59,17 @@ _STOPWORDS = {"the", "table", "with", "data", "that", "this", "about", "from", "
 _SEPARATOR_RE = re.compile(r"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$")
 
 # Cells that mean "no value" (the almanac uses an em dash).
-_MISSING = {"", "—", "–", "-", "n/a", "na", "nan", "none", "null", "?", "…", "..."}
+_MISSING = {
+    "", "—", "–", "-", "--", "n/a", "na", "n.a.", "nan", "none", "null", "?", "…", "...",
+    "unknown", "unk", "tbd", "tba", "missing", "(missing)", "not recorded", "not available",
+    "no data", "n.d.",
+}  # fmt: skip
+# Qualifiers around a number that don't change where it goes on a plot:
+# "~40", "≈40", "<5", "≥ 3", "1.2 ± 0.1", "12†". Strip them and keep the number.
+_QUALIFIER_RE = re.compile(r"^(?:[~≈<>≤≥]|ca\.|approx\.?)\s*|\s*(?:±|\+/-)\s*[\d.,]+$|[*†‡]+$")
+# A column counts as numeric when at least this share of its filled cells are numbers;
+# the remaining text cells ("unknown", "see note") are treated as missing for plotting.
+MOSTLY_NUMERIC = 0.75
 # A number with optional thousands separators (comma, space, thin space), decimals,
 # exponent, and percent sign: "1,020", "2 610", "-3.5", "1.2e3", "45%".
 _NUMBER_RE = re.compile(
@@ -89,7 +98,7 @@ def _convert_cell(cell: Any) -> Any:
     text = cell.strip().strip("*`").strip()
     if text.lower() in _MISSING:
         return None
-    candidate = text.replace("−", "-")  # unicode minus sign
+    candidate = _QUALIFIER_RE.sub("", text.replace("−", "-")).strip()  # unicode minus sign
     if not _NUMBER_RE.fullmatch(candidate):
         return text
     candidate = re.sub(r"[,    %]", "", candidate)
@@ -185,7 +194,7 @@ def load_table_file(path: Path) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValueError(
-            "That file is not a text table. I can plot a table from extract_table or a CSV file."
+            "That file is not a text table. I can plot a table from sixes_extract_table or a CSV file."
         ) from exc
     if not text.strip():
         raise ValueError("That file is empty.")
@@ -216,7 +225,7 @@ def load_table_file(path: Path) -> dict[str, Any]:
     if len(tables) > 1:
         captions = "; ".join(t["caption"] or "(untitled)" for t in tables)
         raise ValueError(
-            f"That document has {len(tables)} tables. Extract one with extract_table first. "
+            f"That document has {len(tables)} tables. Extract one with sixes_extract_table first. "
             f"Tables found: {captions}"
         )
     return parse_csv_table(text)
@@ -296,14 +305,42 @@ def match_column(requested: str, columns: list[str]) -> str | None:
     return None
 
 
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def numeric_columns(columns: list[str], rows: list[list[Any]]) -> list[str]:
     """Columns whose non-missing values are all numbers (and that have at least one)."""
     result = []
     for i, name in enumerate(columns):
         values = [r[i] for r in rows if i < len(r) and r[i] is not None]
-        if values and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+        if values and all(_is_number(v) for v in values):
             result.append(name)
     return result
+
+
+def blank_stray_text(
+    columns: list[str], rows: list[list[Any]]
+) -> tuple[list[list[Any]], dict[str, int]]:
+    """Treat stray text cells in mostly-numeric columns as missing.
+
+    One "unknown" in a column of numbers would otherwise make the whole column
+    unplottable. A column needs at least two numbers and ``MOSTLY_NUMERIC`` of its
+    filled cells numeric; text-heavy columns (names, months) are left alone.
+    Returns ``(new rows, {column: number of cells blanked})``. The input is not changed.
+    """
+    new_rows = [list(r) for r in rows]
+    blanked: dict[str, int] = {}
+    for i, name in enumerate(columns):
+        values = [r[i] for r in new_rows if i < len(r) and r[i] is not None]
+        numbers = sum(_is_number(v) for v in values)
+        if numbers < 2 or numbers == len(values) or numbers / len(values) < MOSTLY_NUMERIC:
+            continue
+        for r in new_rows:
+            if i < len(r) and r[i] is not None and not _is_number(r[i]):
+                r[i] = None
+        blanked[name] = len(values) - numbers
+    return new_rows, blanked
 
 
 def table_to_markdown(columns: list[str], rows: list[list[Any]], max_chars: int | None = None) -> str:
@@ -334,6 +371,15 @@ def default_columns(columns: list[str], numeric: list[str]) -> tuple[str, list[s
     x_column = columns[0]
     y_columns = [c for c in numeric if c != x_column] or numeric[:1]
     return x_column, y_columns
+
+
+def plot_title(x_column: str, y_columns: list[str]) -> str:
+    """A short title like 'Porcini yield vs Month'; units stay on the axes and legend."""
+    names = [_strip_units(c) or c for c in y_columns]
+    if len(names) > 3:
+        names = names[:2] + [f"{len(names) - 2} more"]
+    y_part = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return f"{y_part} vs {_strip_units(x_column) or x_column}"
 
 
 # Keep the table we hand back to the orchestrator under its 6000-char result cap.
@@ -383,8 +429,8 @@ class ReadExtractPlotAgent(PrometheusAgent):
         """
         # The skill ids here must match the "id" fields in agent_card.json.
         handler = {
-            "extract_table": self._handle_extract_table,
-            "plot_table": self._handle_plot_table,
+            "sixes_extract_table": self._handle_extract_table,
+            "sixes_plot_table": self._handle_plot_table,
         }.get(params.get("skill_id"))
         if handler is None:
             return {"status": "error", "error": f"Unknown skill: {params.get('skill_id')}"}
@@ -466,7 +512,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
             return {"status": "error", "error": str(exc)}
 
         # catalog_artifact=True registers the table in the conversation catalog,
-        # which is how plot_table finds it later by id.
+        # which is how sixes_plot_table finds it later by id.
         table_artifact_id = await self.send_json_artifact(
             context,
             event_queue,
@@ -480,7 +526,8 @@ class ReadExtractPlotAgent(PrometheusAgent):
             "table_artifact_id": table_artifact_id,
             "caption": caption,
             "columns": columns,
-            "numeric_columns": numeric_columns(columns, rows),
+            # What sixes_plot_table can plot, after it blanks stray text cells.
+            "numeric_columns": numeric_columns(columns, blank_stray_text(columns, rows)[0]),
             "row_count": len(rows),
             # The actual data, so the orchestrator can answer questions about it.
             "table_markdown": table_to_markdown(columns, rows, TABLE_RESULT_CHARS),
@@ -611,9 +658,10 @@ class ReadExtractPlotAgent(PrometheusAgent):
             return None
         columns = _clean_columns([str(c) for c in columns])
         cleaned_rows = [
-            # Pad or trim to the header width; a stray missing marker still becomes None.
-            [None if isinstance(c, str) and c.strip().lower() in _MISSING else c
-             for c in (list(r) + [None] * len(columns))[: len(columns)]]
+            # Pad or trim to the header width. String cells go through the same cleaner
+            # as the regex parser, so "1,020" -> 1020 and "—" -> None even if the LLM
+            # left them as text.
+            [_convert_cell(c) for c in (list(r) + [None] * len(columns))[: len(columns)]]
             for r in rows
             if isinstance(r, list)
         ]
@@ -664,7 +712,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
         # and the Python state is gone: load what was saved before asking.
         ctx = str(context.context_id)
         provided = self.get_provided_inputs(context)
-        state = self.load_context_state(ctx) if provided else {}
+        state = (self.load_context_state(ctx) or {}) if provided else {}
 
         table_artifact_id = params.get("table_artifact_id") or state.get("table_artifact_id")
         chart_type = str(params.get("chart_type") or state.get("chart_type") or "line")
@@ -678,7 +726,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
         if not table_artifact_id:
             return {
                 "status": "error",
-                "error": "table_artifact_id is required: a table from extract_table or a CSV file",
+                "error": "table_artifact_id is required: a table from sixes_extract_table or a CSV file",
             }
         if chart_type not in CHART_TYPES:
             return {
@@ -696,6 +744,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
         rows: list[list[Any]] = table["rows"]
         if not rows:
             return {"status": "error", "error": "That table has no rows to plot."}
+        rows, blanked = blank_stray_text(columns, rows)
         numeric = numeric_columns(columns, rows)
         if not numeric:
             return {
@@ -740,8 +789,14 @@ class ReadExtractPlotAgent(PrometheusAgent):
                 )
             )
         if missing:
+            # Merge into the saved state so the plot counter survives the question.
             self.save_context_state(
-                ctx, {"table_artifact_id": table_artifact_id, "chart_type": chart_type}
+                ctx,
+                {
+                    **(self.load_context_state(ctx) or {}),
+                    "table_artifact_id": table_artifact_id,
+                    "chart_type": chart_type,
+                },
             )
             hint = "Choose the columns to plot."
             if non_numeric_y and not y_columns:
@@ -759,9 +814,10 @@ class ReadExtractPlotAgent(PrometheusAgent):
             message=f"Plotting {', '.join(y_columns)} vs {x_column}…",
         )
 
-        title = table.get("caption") or f"{', '.join(y_columns)} vs {x_column}"
+        title = plot_title(x_column, y_columns)
+        plot_name = f"plot{self._claim_plot_number(ctx)}.png"
         with tempfile.TemporaryDirectory() as tmp:
-            png = Path(tmp) / "plot.png"
+            png = Path(tmp) / plot_name
             try:
                 # Plotting is CPU work; keep it off the event loop.
                 await asyncio.to_thread(
@@ -775,7 +831,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
                     context=context,
                     event_queue=event_queue,
                     file_path=png,
-                    name="plot.png",
+                    name=plot_name,
                     description=f"{chart_type} plot of {', '.join(y_columns)} vs {x_column}",
                     storage_config=ConnectionConfig.from_env(),
                     mime_type="image/png",
@@ -790,13 +846,31 @@ class ReadExtractPlotAgent(PrometheusAgent):
         result = {
             "status": "success",
             "artifact_id": ref.artifact_id,
+            "plot_name": plot_name,
             "chart_type": chart_type,
             "x_column": x_column,
             "y_columns": y_columns,
         }
         if non_numeric_y:
             result["skipped_non_numeric_columns"] = non_numeric_y
+        # Tell the user which text cells were left out, so nothing vanishes silently.
+        used = {c: n for c, n in blanked.items() if c == x_column or c in y_columns}
+        if used:
+            result["text_cells_treated_as_missing"] = used
         return result
+
+    def _claim_plot_number(self, ctx: str) -> int:
+        """Reserve the next plot number in this conversation (1, 2, 3, …).
+
+        "Plot all tables" makes the orchestrator call this skill several times at
+        once, so the read and the write happen together with no ``await`` between
+        them: each concurrent call gets its own number. A plot that later fails
+        leaves a gap in the numbering, never a duplicate.
+        """
+        state = self.load_context_state(ctx) or {}
+        number = int(state.get("plot_count") or 0) + 1
+        self.save_context_state(ctx, {**state, "plot_count": number})
+        return number
 
     async def _resolve_columns(
         self,
@@ -932,7 +1006,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
         shared_unit = units.pop().strip() if len(units) == 1 else ""
         ylabel = y_columns[0] if len(y_columns) == 1 else shared_unit or ", ".join(y_columns)
         ax.set_ylabel(textwrap.fill(ylabel, 50))
-        ax.set_title(textwrap.fill(title, 90), fontsize=10)
+        ax.set_title(textwrap.fill(title, 70), fontsize=12)
         if len(y_columns) > 1:
             ax.legend()
         ax.grid(alpha=0.3)
@@ -940,5 +1014,5 @@ class ReadExtractPlotAgent(PrometheusAgent):
 
 
 if __name__ == "__main__":
-    agent = ReadExtractPlotAgent(agent_name="Read Extract Plot Agent")
+    agent = ReadExtractPlotAgent(agent_name="Sixes Get Stitches Table Plot Agent")
     agent.run()
