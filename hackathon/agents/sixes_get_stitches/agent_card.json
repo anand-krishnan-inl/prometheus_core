@@ -1,6 +1,6 @@
 {
   "name": "Read Extract Plot Agent",
-  "description": "Extracts a table from an uploaded markdown document and plots its columns.",
+  "description": "Extracts a table from an uploaded markdown document, and plots columns of that table or of an uploaded CSV file.",
   "version": "1.1.0",
   "capabilities": {
     "streaming": false,
@@ -11,10 +11,10 @@
       "id": "extract_table",
       "name": "Extract Table",
       "description": "Reads an uploaded markdown document, finds the table that matches a description, and returns it as a JSON table artifact.",
-      "usage_notes": "Use this skill first, when the user uploads a markdown (.md) document and wants a table pulled out of it. It does not draw anything. To plot the table, call plot_table afterwards with the table_artifact_id this skill returns.",
+      "usage_notes": "Use this skill first, when the user uploads a markdown (.md) document and wants a table pulled out of it. Pass the user's description of the table in their own words (it is matched against the table captions). It does not draw anything. To plot the table, call plot_table afterwards with the table_artifact_id this skill returns. Do not use it on a CSV file; CSV files go straight to plot_table.",
       "requires_approval": false,
       "expected_duration_seconds": 30,
-      "output_format": "JSON with keys: status, table_artifact_id, caption, columns, row_count",
+      "output_format": "JSON with keys: status, table_artifact_id, caption, columns, numeric_columns, row_count",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -28,14 +28,17 @@
             "description": "Text describing which table to find, e.g. 'the table with population data'."
           }
         },
-        "required": ["document_artifact_id", "table_description"]
+        "required": [
+          "document_artifact_id",
+          "table_description"
+        ]
       }
     },
     {
       "id": "plot_table",
       "name": "Plot Table",
-      "description": "Plots columns of a table that extract_table produced and returns the plot as a PNG artifact.",
-      "usage_notes": "Use this skill only after extract_table has produced a table artifact in this conversation. Pass that table's artifact id, the column for the x axis, and one or more columns for the y axis. Do not use it on a raw document; extract the table first.",
+      "description": "Plots columns of tabular data, either a table artifact produced by extract_table or an uploaded CSV file, and returns the plot as a PNG image artifact.",
+      "usage_notes": "Use this skill to plot a table artifact from extract_table, or directly on an uploaded CSV file (no extraction needed). Pass the column names in the user's own words if they did not use the exact names; the skill matches them to the real columns. If the user did not say which columns to plot (e.g. just 'plot this'), leave x_column and y_columns empty: the skill asks the user with a list of the real column names. Do not invent column names. Do not use it on a raw markdown document with several tables; extract the table first.",
       "requires_approval": false,
       "expected_duration_seconds": 30,
       "output_format": "JSON with keys: status, artifact_id, chart_type, x_column, y_columns",
@@ -45,24 +48,32 @@
           "table_artifact_id": {
             "type": "string",
             "x_artifact_ref": "single",
-            "description": "The table artifact returned by extract_table (its table_artifact_id)."
+            "description": "The table artifact returned by extract_table (its table_artifact_id), or an uploaded CSV file."
           },
           "x_column": {
             "type": "string",
-            "description": "Name of the column to use for the x axis, exactly as it appears in the table's columns."
+            "description": "Column for the x axis, as the user named it. Leave empty if the user did not say; the skill will ask."
           },
           "y_columns": {
             "type": "array",
-            "items": {"type": "string"},
-            "description": "One or more column names to plot on the y axis, exactly as they appear in the table's columns."
+            "items": {
+              "type": "string"
+            },
+            "description": "One or more columns to plot on the y axis, as the user named them. Leave empty if the user did not say; the skill will ask."
           },
           "chart_type": {
             "type": "string",
-            "enum": ["line", "bar", "scatter"],
+            "enum": [
+              "line",
+              "bar",
+              "scatter"
+            ],
             "description": "Kind of chart to draw. Defaults to 'line'."
           }
         },
-        "required": ["table_artifact_id", "x_column", "y_columns"]
+        "required": [
+          "table_artifact_id"
+        ]
       }
     }
   ]
