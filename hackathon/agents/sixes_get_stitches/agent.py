@@ -92,9 +92,13 @@ class ReadExtractPlotAgent(PrometheusAgent):
         # 1. Read inputs from params.  These keys must match the properties
         #    declared in agent_card.json's inputSchema.
         # ------------------------------------------------------------------
-        input_data = params.get("input_data")
-        if not input_data:
-            return {"status": "error", "error": "input_data is required"}
+        document_artifact_id = params.get("document_artifact_id")
+        table_description = params.get("table_description")
+        if not document_artifact_id or not table_description:
+            return {
+                "status": "error",
+                "error": "document_artifact_id and table_description are required",
+            }
 
         # ------------------------------------------------------------------
         # 2. Send optional progress updates so the UI stays responsive.
@@ -112,7 +116,10 @@ class ReadExtractPlotAgent(PrometheusAgent):
         # ------------------------------------------------------------------
         result = {
             "status": "success",
-            "input_received": input_data,
+            "input_received": {
+                "document_artifact_id": document_artifact_id,
+                "table_description": table_description,
+            },
             "message": "Replace this with your agent's processing logic.",
         }
 
