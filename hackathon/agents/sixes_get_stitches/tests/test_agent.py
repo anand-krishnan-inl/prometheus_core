@@ -30,6 +30,7 @@ from agent import (
     load_table_file,
     match_column,
     numeric_columns,
+    table_to_markdown,
     parse_csv_table,
     parse_markdown_tables,
 )
@@ -220,6 +221,48 @@ async def test_extract_by_table_number(context, event_queue, tmp_path):
     assert result["columns"] == COLUMNS
 
 
+async def test_extract_returns_table_data(context, event_queue, tmp_path):
+    agent = _make_agent()
+    _serve(agent, tmp_path, "doc.md", ALMANAC)
+
+    result = await agent._execute(
+        {"skill_id": "extract_table", "document_artifact_id": "d", "table_description": "Table 3"},
+        context,
+        event_queue,
+    )
+
+    assert result["table_markdown"].splitlines()[0].startswith("| " + COLUMNS[0])
+    assert len(result["table_markdown"].splitlines()) == result["row_count"] + 2
+    assert "answer" not in result
+
+
+async def test_extract_answers_question(context, event_queue, tmp_path):
+    agent = _make_agent()
+    agent._llm_text = AsyncMock(return_value="42")
+    _serve(agent, tmp_path, "doc.md", ALMANAC)
+
+    result = await agent._execute(
+        {
+            "skill_id": "extract_table",
+            "document_artifact_id": "d",
+            "table_description": "Table 3",
+            "question": "What is the largest value?",
+        },
+        context,
+        event_queue,
+    )
+
+    assert result["answer"] == "42"
+    assert "What is the largest value?" in agent._llm_text.await_args.args[0]
+
+
+def test_table_to_markdown_truncates():
+    text = table_to_markdown(["a", "b"], [[i, None] for i in range(100)], max_chars=60)
+
+    assert len(text) < 100
+    assert "more rows not shown" in text
+
+
 async def test_extract_unknown_table_number(context, event_queue, tmp_path):
     agent = _make_agent()
     _serve(agent, tmp_path, "doc.md", ALMANAC)
@@ -368,7 +411,7 @@ async def test_plot_csv_directly(context, event_queue, tmp_path):
     assert result["chart_type"] == "bar"
 
 
-async def test_plot_without_columns_asks_with_real_names(context, event_queue, tmp_path):
+async def test_plot_without_columns_uses_defaults(context, event_queue, tmp_path):
     agent = _make_agent()
     _serve(agent, tmp_path, "sightings.csv", CSV)
 
@@ -376,12 +419,10 @@ async def test_plot_without_columns_asks_with_real_names(context, event_queue, t
         {"skill_id": "plot_table", "table_artifact_id": "c"}, context, event_queue
     )
 
-    assert result == {}
-    agent.save_context_state.assert_called_once()
-    missing = agent.send_input_required.await_args.kwargs["missing_inputs"]
-    assert [m.name for m in missing] == ["x_column", "y_columns"]
-    assert missing[0].type == "enum"
-    assert "night" in missing[0].options
+    assert result["status"] == "success", result
+    assert result["x_column"] == "night"
+    assert result["y_columns"] == ["mice_sighted", "cheese_lost_kg", "tunnel_temperature_C"]
+    agent.send_input_required.assert_not_awaited()
 
 
 async def test_plot_resumes_with_answers(context, event_queue, tmp_path):

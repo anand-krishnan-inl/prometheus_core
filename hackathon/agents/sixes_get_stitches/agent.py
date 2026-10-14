@@ -306,6 +306,40 @@ def numeric_columns(columns: list[str], rows: list[list[Any]]) -> list[str]:
     return result
 
 
+def table_to_markdown(columns: list[str], rows: list[list[Any]], max_chars: int | None = None) -> str:
+    """Render a table as compact markdown, dropping trailing rows past ``max_chars``."""
+
+    def line(cells: list[Any]) -> str:
+        text = ["" if c is None else str(c).replace("|", "\\|") for c in cells]
+        return "| " + " | ".join(text) + " |"
+
+    out = [line(columns), "|" + "---|" * len(columns)]
+    size = sum(len(s) + 1 for s in out)
+    for k, row in enumerate(rows):
+        text = line(row)
+        if max_chars is not None and size + len(text) + 1 > max_chars:
+            out.append(f"... ({len(rows) - k} more rows not shown)")
+            break
+        out.append(text)
+        size += len(text) + 1
+    return "\n".join(out)
+
+
+def default_columns(columns: list[str], numeric: list[str]) -> tuple[str, list[str]]:
+    """Pick a sensible x axis and y series when the user didn't say.
+
+    x is the first column (usually the label/key column, e.g. a name or year);
+    y is every other numeric column.
+    """
+    x_column = columns[0]
+    y_columns = [c for c in numeric if c != x_column] or numeric[:1]
+    return x_column, y_columns
+
+
+# Keep the table we hand back to the orchestrator under its 6000-char result cap.
+TABLE_RESULT_CHARS = 4500
+
+
 def _as_list(value: Any) -> list[str]:
     """Accept a list of names, one name, or a JSON-encoded list of names."""
     if value is None:
@@ -435,14 +469,43 @@ class ReadExtractPlotAgent(PrometheusAgent):
             description=caption or table_description,
             catalog_artifact=True,
         )
-        return {
+        result: dict[str, Any] = {
             "status": "success",
             "table_artifact_id": table_artifact_id,
             "caption": caption,
             "columns": columns,
             "numeric_columns": numeric_columns(columns, rows),
             "row_count": len(rows),
+            # The actual data, so the orchestrator can answer questions about it.
+            "table_markdown": table_to_markdown(columns, rows, TABLE_RESULT_CHARS),
         }
+        question = str(params.get("question") or "").strip()
+        if question:
+            # Answer here, over the full table, so large tables aren't truncated away.
+            try:
+                result["answer"] = await self._answer_question(
+                    question, caption, columns, rows, context
+                )
+            except Exception:
+                logger.exception("LLM table question failed; returning the table only")
+        return result
+
+    async def _answer_question(
+        self,
+        question: str,
+        caption: str,
+        columns: list[str],
+        rows: list[list[Any]],
+        context: RequestContext,
+    ) -> str:
+        """Answer a question about the table's data with the LLM."""
+        prompt = (
+            "Answer the question using ONLY the table below. Missing cells are blank. "
+            "Be concise, give the answer first, and name the row(s) it comes from.\n\n"
+            f"Table: {caption or '(untitled)'}\n{table_to_markdown(columns, rows)}\n\n"
+            f"Question: {question}"
+        )
+        return (await self._llm_text(prompt, context, max_tokens=400)).strip()
 
     async def _find_table(
         self,
@@ -581,6 +644,13 @@ class ReadExtractPlotAgent(PrometheusAgent):
         )
         non_numeric_y = [c for c in y_columns if c not in numeric]
         y_columns = [c for c in y_columns if c in numeric]
+
+        # Nothing requested and nothing unmatched: choose defaults rather than
+        # asking, so "plot table 3" just plots.
+        if not unmatched and not non_numeric_y:
+            default_x, default_y = default_columns(columns, numeric)
+            x_column = x_column or default_x
+            y_columns = y_columns or [c for c in default_y if c != x_column] or default_y
 
         # Ask for whatever is still missing, offering the real column names.
         missing: list[MissingInput] = []
