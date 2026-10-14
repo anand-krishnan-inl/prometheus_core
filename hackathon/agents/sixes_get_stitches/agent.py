@@ -37,7 +37,6 @@ import tempfile
 import textwrap
 from pathlib import Path
 from typing import Any
-#import aiofiles
 
 from matplotlib.figure import Figure
 from prometheus_api.agent import EventQueue, MissingInput, PrometheusAgent, RequestContext
@@ -185,7 +184,7 @@ def load_table_file(path: Path) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValueError(
-            "That file is not a text table. I can plot a table from extract_table or a CSV file."
+            "That file is not a text table. I can plot a table from sixes_extract_table or a CSV file."
         ) from exc
     if not text.strip():
         raise ValueError("That file is empty.")
@@ -216,7 +215,7 @@ def load_table_file(path: Path) -> dict[str, Any]:
     if len(tables) > 1:
         captions = "; ".join(t["caption"] or "(untitled)" for t in tables)
         raise ValueError(
-            f"That document has {len(tables)} tables. Extract one with extract_table first. "
+            f"That document has {len(tables)} tables. Extract one with sixes_extract_table first. "
             f"Tables found: {captions}"
         )
     return parse_csv_table(text)
@@ -383,8 +382,8 @@ class ReadExtractPlotAgent(PrometheusAgent):
         """
         # The skill ids here must match the "id" fields in agent_card.json.
         handler = {
-            "extract_table": self._handle_extract_table,
-            "plot_table": self._handle_plot_table,
+            "sixes_extract_table": self._handle_extract_table,
+            "sixes_plot_table": self._handle_plot_table,
         }.get(params.get("skill_id"))
         if handler is None:
             return {"status": "error", "error": f"Unknown skill: {params.get('skill_id')}"}
@@ -466,7 +465,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
             return {"status": "error", "error": str(exc)}
 
         # catalog_artifact=True registers the table in the conversation catalog,
-        # which is how plot_table finds it later by id.
+        # which is how sixes_plot_table finds it later by id.
         table_artifact_id = await self.send_json_artifact(
             context,
             event_queue,
@@ -664,7 +663,10 @@ class ReadExtractPlotAgent(PrometheusAgent):
         # and the Python state is gone: load what was saved before asking.
         ctx = str(context.context_id)
         provided = self.get_provided_inputs(context)
-        state = self.load_context_state(ctx) if provided else {}
+        saved = self.load_context_state(ctx) or {}
+        state = saved if provided else {}
+        # Number the plots per conversation (plot1.png, plot2.png, …) so each one is kept.
+        plot_count = int(saved.get("plot_count") or 0)
 
         table_artifact_id = params.get("table_artifact_id") or state.get("table_artifact_id")
         chart_type = str(params.get("chart_type") or state.get("chart_type") or "line")
@@ -678,7 +680,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
         if not table_artifact_id:
             return {
                 "status": "error",
-                "error": "table_artifact_id is required: a table from extract_table or a CSV file",
+                "error": "table_artifact_id is required: a table from sixes_extract_table or a CSV file",
             }
         if chart_type not in CHART_TYPES:
             return {
@@ -741,7 +743,12 @@ class ReadExtractPlotAgent(PrometheusAgent):
             )
         if missing:
             self.save_context_state(
-                ctx, {"table_artifact_id": table_artifact_id, "chart_type": chart_type}
+                ctx,
+                {
+                    "table_artifact_id": table_artifact_id,
+                    "chart_type": chart_type,
+                    "plot_count": plot_count,
+                },
             )
             hint = "Choose the columns to plot."
             if non_numeric_y and not y_columns:
@@ -760,8 +767,9 @@ class ReadExtractPlotAgent(PrometheusAgent):
         )
 
         title = table.get("caption") or f"{', '.join(y_columns)} vs {x_column}"
+        plot_name = f"plot{plot_count + 1}.png"
         with tempfile.TemporaryDirectory() as tmp:
-            png = Path(tmp) / "plot.png"
+            png = Path(tmp) / plot_name
             try:
                 # Plotting is CPU work; keep it off the event loop.
                 await asyncio.to_thread(
@@ -775,7 +783,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
                     context=context,
                     event_queue=event_queue,
                     file_path=png,
-                    name="plot.png",
+                    name=plot_name,
                     description=f"{chart_type} plot of {', '.join(y_columns)} vs {x_column}",
                     storage_config=ConnectionConfig.from_env(),
                     mime_type="image/png",
@@ -787,9 +795,12 @@ class ReadExtractPlotAgent(PrometheusAgent):
                     "error": "I drew the plot but could not store it. Check the DeepLynx "
                     "settings in the agent's .env (/diagnose can help).",
                 }
+        # Only count plots that were stored; drop the follow-up state now that we're done.
+        self.save_context_state(ctx, {"plot_count": plot_count + 1})
         result = {
             "status": "success",
             "artifact_id": ref.artifact_id,
+            "plot_name": plot_name,
             "chart_type": chart_type,
             "x_column": x_column,
             "y_columns": y_columns,
@@ -940,5 +951,5 @@ class ReadExtractPlotAgent(PrometheusAgent):
 
 
 if __name__ == "__main__":
-    agent = ReadExtractPlotAgent(agent_name="Read Extract Plot Agent")
+    agent = ReadExtractPlotAgent(agent_name="Sixes Get Stitches Table Plot Agent")
     agent.run()
