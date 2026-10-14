@@ -1,0 +1,4 @@
+services:
+  read-extract-plot-agent:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
