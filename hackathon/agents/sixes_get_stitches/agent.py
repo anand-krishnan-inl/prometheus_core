@@ -22,6 +22,7 @@ serving, and registry registration for you.
 
 import logging
 from typing import Any
+#import aiofiles
 
 from prometheus_api import load_prompt  # noqa: F401 - used by the LLM pattern below
 from prometheus_api.agent import EventQueue, PrometheusAgent, RequestContext
@@ -114,6 +115,16 @@ class ReadExtractPlotAgent(PrometheusAgent):
         # ------------------------------------------------------------------
         # 3. Do your actual work here.  Replace this with real logic.
         # ------------------------------------------------------------------
+        source_path = await self.get_artifact_file_path(
+            document_artifact_id,
+            context=context,
+            artifacts=params.get("artifacts"),  # optional orchestrator-provided catalog
+        ) 
+        # --- Read the file asynchronously into a string ---
+        #async with aiofiles.open(source_path, mode='r') as f:
+        #    file_contents: str = await f.read()
+    # -----------------------------------------------
+
         result = {
             "status": "success",
             "input_received": {
@@ -122,6 +133,7 @@ class ReadExtractPlotAgent(PrometheusAgent):
             },
             "message": "Replace this with your agent's processing logic.",
         }
+        
 
         # ------------------------------------------------------------------
         # 4. Return a plain dict.  Keep keys consistent with the
