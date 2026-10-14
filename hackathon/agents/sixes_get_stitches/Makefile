@@ -70,6 +70,7 @@ endif
 
 up: ##@ Build and start the agent (detached)
 up: validate-network
+	cp ../../../platform/.env .
 	$(COMPOSE) $(COMPOSE_FILES) up --build -d
 
 up-fg: ##@ Build and start the agent (foreground)
