@@ -260,6 +260,19 @@ def mime_type_label(mime_type: str, filename: str = "") -> str:
 # Description inference
 # ---------------------------------------------------------------------------
 
+# DeepLynx (deeplynx-server v0.8.0) rejects a record description over 250 characters with HTTP 400, which
+# fails the record update after the file upload and drops the user's file. Every description returned by
+# infer_file_descriptions -- the LLM's or the fallback -- is held under this limit.
+MAX_DESCRIPTION_CHARS = 250
+
+
+def _limit_description(text: str) -> str:
+    """Return ``text`` on one line and at most MAX_DESCRIPTION_CHARS characters, ending in an ellipsis if cut."""
+    text = " ".join(text.split())
+    if len(text) <= MAX_DESCRIPTION_CHARS:
+        return text
+    return text[: MAX_DESCRIPTION_CHARS - 1].rstrip() + "\u2026"
+
 
 async def infer_file_descriptions(
     query: str,
@@ -278,7 +291,8 @@ async def infer_file_descriptions(
         f"Files:\n{file_list}\n\n"
         f"User query: {query!r}\n\n"
         "For each file, write one concise sentence describing what it likely contains "
-        "and why it was uploaded.  Use the query for context when it is informative; "
+        f"and why it was uploaded, in at most {MAX_DESCRIPTION_CHARS} characters.  "
+        "Use the query for context when it is informative; "
         "otherwise synthesise a description from the filename and file type alone "
         '(e.g. "MOOSE Exodus mesh file for reactor core geometry.").\n'
         "Always produce a non-empty string — never output null.\n\n"
@@ -295,7 +309,7 @@ async def infer_file_descriptions(
             out: Dict[str, str] = {}
             for f in files:
                 desc = result.get(f.name)
-                out[f.name] = str(desc).strip() if desc else _fallback_description(f)
+                out[f.name] = _limit_description(str(desc)) if desc and str(desc).strip() else _fallback_description(f)
             return out
     except Exception:
         pass
@@ -305,7 +319,7 @@ async def infer_file_descriptions(
 
 def _fallback_description(f: UploadedFile) -> str:
     label = mime_type_label(f.mime_type, f.name)
-    return f"User-uploaded {label}: {f.name}"
+    return _limit_description(f"User-uploaded {label}: {f.name}")
 
 
 # ---------------------------------------------------------------------------

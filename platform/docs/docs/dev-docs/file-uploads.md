@@ -53,6 +53,12 @@ A single LLM call returns a JSON mapping `{filename: description}`.  The prompt 
 
 If the LLM response cannot be parsed, `_fallback_description()` is used: `"User-uploaded <label>: <filename>"`.
 
+Every description, whether from the LLM or the fallback, is at most 250 characters (`MAX_DESCRIPTION_CHARS`). The prompt
+states the limit, and `_limit_description()` enforces it, cutting with an ellipsis when needed. DeepLynx
+(deeplynx-server v0.8.0) rejects a longer record description with HTTP 400. That fails the record update
+after the file upload, and the file is dropped with only `[WARN] Failed to upload ... HTTP 400` in the
+client-agent log.
+
 ## MIME-to-label mapping (`mime_type_label`)
 
 `file_upload_handler.mime_type_label(mime_type, filename)` produces a human-readable label such as `"Exodus mesh file"` or `"MOOSE input file"`.  It checks:
